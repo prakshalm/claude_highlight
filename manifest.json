@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Claude Highlighter",
+  "version": "1.0.0",
+  "description": "Highlight Claude's responses, take notes on highlights, and have them persist across reloads.",
+  "permissions": ["storage"],
+  "host_permissions": ["https://claude.ai/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://claude.ai/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Claude Highlights"
+  }
+}
