@@ -1,13 +1,13 @@
 {
   "manifest_version": 3,
-  "name": "Claude Highlighter",
-  "version": "1.0.0",
-  "description": "Highlight Claude's responses, take notes on highlights, and have them persist across reloads.",
-  "permissions": ["storage"],
-  "host_permissions": ["https://claude.ai/*"],
+  "name": "Web Highlighter",
+  "version": "1.1.0",
+  "description": "Highlight any web page, take notes, persist across reloads. Always on for Claude and ChatGPT; toggle from the extension icon for other sites.",
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": ["<all_urls>"],
   "content_scripts": [
     {
-      "matches": ["https://claude.ai/*"],
+      "matches": ["<all_urls>"],
       "js": ["content.js"],
       "css": ["content.css"],
       "run_at": "document_idle"
@@ -15,6 +15,6 @@
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Claude Highlights"
+    "default_title": "Web Highlighter"
   }
 }

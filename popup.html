@@ -3,11 +3,21 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="stylesheet" href="popup.css" />
-    <title>Claude Highlights</title>
+    <title>Web Highlighter</title>
   </head>
   <body>
     <div class="header">
-      <h1>Claude Highlights</h1>
+      <h1>Web Highlighter</h1>
+      <div class="site-section">
+        <div class="site-info">
+          <div class="site-host" id="siteHost">—</div>
+          <div class="site-state" id="siteState">…</div>
+        </div>
+        <label class="switch" id="enableSwitch" hidden>
+          <input type="checkbox" id="enableToggle" />
+          <span class="slider"></span>
+        </label>
+      </div>
       <input id="search" placeholder="Search highlights or notes…" />
     </div>
     <div id="list" class="list"></div>

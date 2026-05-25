@@ -1,7 +1,9 @@
-# Claude Highlighter
+# Web Highlighter
 
-A Chrome extension that lets you highlight Claude's responses on claude.ai, attach
-notes to highlights, and have everything persist across page reloads and chat re-opens.
+A Chrome extension that lets you highlight text on any web page, attach notes to
+highlights, and have everything persist across reloads. It's **always on** for
+Claude (claude.ai) and ChatGPT (chatgpt.com); for any other site, you opt-in by
+clicking the extension icon and flipping the per-site toggle.
 
 ## Features
 

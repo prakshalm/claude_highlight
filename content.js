@@ -3,6 +3,16 @@
 
 (() => {
   const STORAGE_KEY = "claude_highlights_v1";
+  const ENABLED_HOSTS_KEY = "claude_hl_enabled_hosts";
+  // Hosts where the extension is on by default (and the toggle is locked-on).
+  const AUTO_ENABLED_HOSTS = ["claude.ai", "chatgpt.com", "chat.openai.com"];
+
+  function isHostAutoEnabled(host) {
+    return AUTO_ENABLED_HOSTS.some((h) => host === h || host.endsWith("." + h));
+  }
+
+  // Activation state — false until startup check (or message) flips it on.
+  let isActive = false;
   const COLORS = [
     "rgba(255, 235, 59, 0.7)",    // yellow
     "rgba(34, 197, 94, 0.6)",     // green
@@ -23,9 +33,21 @@
 
   // --- Utilities --------------------------------------------------------------
 
+  // Returns a stable identifier for the current page so highlights can be looked
+  // up per-page. For Claude, we keep returning the bare chat UUID so existing
+  // saved highlights still match. For ChatGPT we use the conversation ID. For
+  // any other site we use `host + pathname` (the URL minus query/hash).
   function getConversationId() {
-    const m = location.pathname.match(/\/chat\/([a-f0-9-]+)/i);
-    return m ? m[1] : null;
+    const host = location.hostname;
+    if (host === "claude.ai" || host.endsWith(".claude.ai")) {
+      const m = location.pathname.match(/\/chat\/([a-f0-9-]+)/i);
+      return m ? m[1] : null;
+    }
+    if (host === "chatgpt.com" || host.endsWith(".chatgpt.com")) {
+      const m = location.pathname.match(/\/c\/([a-zA-Z0-9-]+)/);
+      return m ? `chatgpt.com/${m[1]}` : null;
+    }
+    return host + location.pathname;
   }
 
   function genId() {
@@ -442,6 +464,7 @@
   // --- Selection handling ----------------------------------------------------
 
   document.addEventListener("mouseup", () => {
+    if (!isActive) return;
     setTimeout(() => {
       const sel = window.getSelection();
       if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
@@ -795,6 +818,7 @@
 
   // Click on existing highlight to open note popup.
   document.addEventListener("click", async (e) => {
+    if (!isActive) return;
     const span = e.target.closest && e.target.closest(".claude-hl");
     if (!span) {
       // Click outside any note popup closes it.
@@ -814,6 +838,16 @@
   // --- Listen to popup messages (jump to highlight) --------------------------
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg && msg.type === "setEnabled") {
+      if (msg.enabled) activate();
+      else deactivate();
+      sendResponse({ ok: true, enabled: isActive });
+      return;
+    }
+    if (msg && msg.type === "getEnabled") {
+      sendResponse({ enabled: isActive, host: location.hostname });
+      return;
+    }
     if (msg && msg.type === "scrollToHighlight" && msg.id) {
       const span = document.querySelector(`.claude-hl[data-hl-id="${msg.id}"]`);
       if (span) {
@@ -982,6 +1016,7 @@
   document.addEventListener(
     "keydown",
     (e) => {
+      if (!isActive) return;
       if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyH") {
         e.preventDefault();
         e.stopPropagation();
@@ -1011,6 +1046,7 @@
 
   _mo = new MutationObserver(() => {
     if (!isContextValid()) return;
+    if (!isActive) return;
     const newId = getConversationId();
     if (newId !== currentConvId) {
       currentConvId = newId;
@@ -1022,6 +1058,50 @@
   });
   _mo.observe(document.body, { childList: true, subtree: true });
 
-  // Initial restore once the page is idle.
-  scheduleRestore(600);
+  // --- Activation gate -------------------------------------------------------
+
+  function activate() {
+    if (isActive) return;
+    isActive = true;
+    scheduleRestore(150);
+    schedulePositionMarkers();
+  }
+
+  function deactivate() {
+    if (!isActive) return;
+    isActive = false;
+    hideToolbar();
+    closeNotePopup();
+    closeSearchPanel();
+    const g = document.getElementById("claude-hl-gutter");
+    if (g) g.remove();
+    // Highlight spans stay in the DOM (they're harmless when inactive); re-
+    // enabling restores their interactivity. They're only removed on page reload
+    // or by user deletion.
+  }
+
+  async function loadEnabledHosts() {
+    if (!isContextValid()) return [];
+    return new Promise((resolve) => {
+      try {
+        chrome.storage.local.get([ENABLED_HOSTS_KEY], (res) => {
+          if (chrome.runtime.lastError) return resolve([]);
+          resolve(res[ENABLED_HOSTS_KEY] || []);
+        });
+      } catch (_) {
+        resolve([]);
+      }
+    });
+  }
+
+  async function startupActivation() {
+    const host = location.hostname;
+    if (isHostAutoEnabled(host)) {
+      activate();
+      return;
+    }
+    const list = await loadEnabledHosts();
+    if (list.includes(host)) activate();
+  }
+  startupActivation();
 })();
