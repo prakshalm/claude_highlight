@@ -1,13 +1,21 @@
 {
   "manifest_version": 3,
   "name": "Claude Highlighter",
-  "version": "1.0.0",
-  "description": "Highlight Claude's responses, take notes on highlights, and have them persist across reloads.",
-  "permissions": ["storage"],
-  "host_permissions": ["https://claude.ai/*"],
+  "version": "1.2.0",
+  "description": "Highlight AI assistant responses (Claude, ChatGPT, and any site you enable), take notes, and have them persist across reloads.",
+  "permissions": ["storage", "scripting", "tabs", "activeTab"],
+  "host_permissions": [
+    "https://claude.ai/*",
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*"
+  ],
   "content_scripts": [
     {
-      "matches": ["https://claude.ai/*"],
+      "matches": [
+        "https://claude.ai/*",
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*"
+      ],
       "js": ["content.js"],
       "css": ["content.css"],
       "run_at": "document_idle"

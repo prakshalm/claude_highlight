@@ -2,15 +2,21 @@
 // Adds highlight + note functionality to claude.ai chat pages and persists them via chrome.storage.
 
 (() => {
+  // Guard against re-injection. The popup re-injects via chrome.scripting on
+  // every icon click for non-default sites; without this guard the IIFE would
+  // re-bind every listener, duplicating toolbars and save calls.
+  if (window.__claudeHighlighterLoaded) return;
+  window.__claudeHighlighterLoaded = true;
+
   const STORAGE_KEY = "claude_highlights_v1";
   const COLORS = [
-    "rgba(255, 235, 59, 0.7)",    // yellow
-    "rgba(34, 197, 94, 0.6)",     // green
-    "rgba(59, 130, 246, 0.6)",    // blue
-    "rgba(236, 72, 153, 0.6)",    // pink
-    "rgba(249, 115, 22, 0.65)",   // orange
+    "rgba(255, 235, 59, 1)",    // yellow
+    "rgba(34, 197, 94, 1)",     // green
+    "rgba(59, 130, 246, 1)",    // blue
+    "rgba(236, 72, 153, 1)",    // pink
+    "rgba(249, 115, 22, 1)",    // orange
   ];
-  const DEFAULT_ALPHA = 0.7;
+  const DEFAULT_ALPHA = 1.0;
   const TEXT_COLORS = [
     "#000000", // black
     "#374151", // dark gray
@@ -23,9 +29,23 @@
 
   // --- Utilities --------------------------------------------------------------
 
+  // Derive a stable storage key for the current page.
+  //   claude.ai/chat/<uuid>        -> "<uuid>"        (preserves existing data)
+  //   chatgpt.com/c/<uuid>         -> "chatgpt:<uuid>"
+  //   chat.openai.com/c/<uuid>     -> "chatgpt:<uuid>"
+  //   any other site               -> "url:<origin><pathname>"
+  //   chat root with no chat open  -> null
   function getConversationId() {
-    const m = location.pathname.match(/\/chat\/([a-f0-9-]+)/i);
-    return m ? m[1] : null;
+    const host = location.hostname;
+    if (host === "claude.ai") {
+      const m = location.pathname.match(/\/chat\/([a-f0-9-]+)/i);
+      return m ? m[1] : null;
+    }
+    if (host === "chatgpt.com" || host === "chat.openai.com") {
+      const m = location.pathname.match(/\/c\/([a-f0-9-]+)/i);
+      return m ? "chatgpt:" + m[1] : null;
+    }
+    return "url:" + location.origin + location.pathname;
   }
 
   function genId() {
@@ -286,10 +306,16 @@
     const gutter = ensureGutter();
     const chat = findChatContainer();
     const chatRect = chat && chat.getBoundingClientRect();
-    // x position: just outside the chat container's right edge, clamped to viewport.
-    let markerX = window.innerWidth - 40;
+    // x position: just outside the chat container's right edge, but always at
+    // least RIGHT_GAP clear of the inner viewport edge (clientWidth excludes
+    // the scrollbar, so RIGHT_GAP is pure breathing room past it).
+    const MARKER_W = 32;
+    const RIGHT_GAP = 40;
+    const viewportW = document.documentElement.clientWidth || window.innerWidth;
+    const maxX = viewportW - MARKER_W - RIGHT_GAP;
+    let markerX = maxX;
     if (chatRect) {
-      markerX = Math.min(window.innerWidth - 40, chatRect.right + 6);
+      markerX = Math.min(maxX, chatRect.right + 6);
       markerX = Math.max(8, markerX);
     }
 
@@ -485,7 +511,7 @@
     if (!currentRange) return;
     const convId = getConversationId();
     if (!convId) {
-      alert("Claude Highlighter: open a specific chat to save highlights.");
+      alert("Open a specific chat to save highlights.");
       return;
     }
 
@@ -520,6 +546,9 @@
       contextAfter,
       occurrence,
       createdAt: new Date().toISOString(),
+      url: location.href,
+      host: location.hostname,
+      title: document.title || "",
     };
 
     wrapRange(currentRange, id, color, hl.textColor);
@@ -765,6 +794,9 @@
     const h = wrap.offsetHeight || 220;
     const isMarker = anchorEl.classList && anchorEl.classList.contains("claude-hl-marker");
 
+    // Extra right-edge padding so the popup never sits flush against the
+    // scrollbar (typical scrollbar width ~15-17px; this leaves a clear gap).
+    const RIGHT_PAD = 28;
     let top, left;
     if (isMarker) {
       const gap = 8;
@@ -776,13 +808,13 @@
         top = window.scrollY + rect.top - h - gap;
       }
       // Clamp to viewport.
-      left = Math.max(window.scrollX + 8, Math.min(left, window.scrollX + window.innerWidth - w - 8));
+      left = Math.max(window.scrollX + 8, Math.min(left, window.scrollX + window.innerWidth - w - RIGHT_PAD));
       top = Math.max(window.scrollY + 8, Math.min(top, window.scrollY + window.innerHeight - h - 8));
     } else {
       top = window.scrollY + rect.bottom + 6;
       left = window.scrollX + rect.left;
-      if (left + w > window.scrollX + window.innerWidth) {
-        left = window.scrollX + window.innerWidth - w - 10;
+      if (left + w > window.scrollX + window.innerWidth - RIGHT_PAD) {
+        left = window.scrollX + window.innerWidth - w - RIGHT_PAD;
       }
       left = Math.max(8, left);
     }
