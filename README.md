@@ -42,11 +42,10 @@ open, the old content script's storage handle is invalidated by Chrome. The
 extension detects this, stops trying, and logs a notice — just refresh the Claude
 tab to re-enable highlighting.
 
-## Notes / limitations
+## Notes
 
 - Restoration matches highlights by exact text + surrounding context. If Claude's
   message text changes (e.g., you regenerate a response), an old highlight may not
   re-attach.
-- Works only on `https://claude.ai/*`.
 - Storage uses `chrome.storage.local`; export to JSON from the popup if you want a
   backup.
