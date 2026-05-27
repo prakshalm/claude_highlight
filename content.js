@@ -479,7 +479,18 @@
     toolbarEl = tb;
     currentRange = range.cloneRange();
   }
-
+  // --- Streaming detection ---------------------------------------------------
+  // Blocks highlight creation while Claude is actively generating a response.
+  function isStreaming() {
+    const stopBtn = document.querySelector(
+      'button[aria-label*="Stop"], button[data-testid*="stop"], button[title*="Stop"]'
+    );
+    if (stopBtn) return true;
+    const spinner = document.querySelector(
+      '[data-testid="streaming-indicator"], .loading-indicator, [class*="streaming"]'
+    );
+    return !!spinner;
+  }
   // --- Selection handling ----------------------------------------------------
 
   // Check if a node is inside an input area (textarea, input, contenteditable, etc.)
@@ -538,6 +549,16 @@
 
   function createHighlight(color, openNote) {
     if (!currentRange) return;
+    // Block highlight creation while Claude is mid-stream. The DOM is actively
+    // mutating so range anchors are unreliable and spans get wiped.
+    if (isStreaming()) {
+      if (toolbarEl) {
+        toolbarEl.style.background = "#dc2626";
+        toolbarEl.title = "Wait for Claude to finish responding before highlighting.";
+        setTimeout(hideToolbar, 800);
+      }
+      return;
+    }
     const convId = getConversationId();
     if (!convId) {
       alert("Open a specific chat to save highlights.");
