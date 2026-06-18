@@ -456,16 +456,51 @@
     tb.appendChild(noteBtn);
 
     document.body.appendChild(tb);
-    const top = window.scrollY + rect.top - tb.offsetHeight - 8;
-    const left = window.scrollX + rect.left + rect.width / 2 - tb.offsetWidth / 2;
-    tb.style.top = Math.max(window.scrollY + 4, top) + "px";
-    tb.style.left = Math.max(4, left) + "px";
+    
+    // Position toolbar below the selection
+    const toolbarHeight = tb.offsetHeight;
+    const toolbarWidth = tb.offsetWidth;
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const scrollX = window.scrollX;
+    const scrollY = window.scrollY;
+    
+    // Position below selection, centered horizontally
+    let top = scrollY + rect.bottom + 8;
+    let left = scrollX + rect.left + rect.width / 2 - toolbarWidth / 2;
+    
+    // Clamp to viewport bounds
+    top = Math.min(top, scrollY + viewportHeight - toolbarHeight - 8);
+    left = Math.max(4, Math.min(left, scrollX + viewportWidth - toolbarWidth - 8));
+    
+    tb.style.top = top + "px";
+    tb.style.left = left + "px";
 
     toolbarEl = tb;
     currentRange = range.cloneRange();
   }
-
+  // --- Streaming detection ---------------------------------------------------
+  // Blocks highlight creation while Claude is actively generating a response.
+  function isStreaming() {
+    const stopBtn = document.querySelector(
+      'button[aria-label*="Stop"], button[data-testid*="stop"], button[title*="Stop"]'
+    );
+    if (stopBtn) return true;
+    const spinner = document.querySelector(
+      '[data-testid="streaming-indicator"], .loading-indicator, [class*="streaming"]'
+    );
+    return !!spinner;
+  }
   // --- Selection handling ----------------------------------------------------
+
+  // Check if a node is inside an input area (textarea, input, contenteditable, etc.)
+  function isNodeInInputArea(node) {
+    if (!node) return false;
+    let el = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+    return !!el.closest(
+      '[contenteditable="true"], textarea, input, [data-testid*="input"], [role="textbox"], [role="combobox"]'
+    );
+  }
 
   document.addEventListener("mouseup", () => {
     setTimeout(() => {
@@ -486,6 +521,11 @@
         hideToolbar();
         return;
       }
+      // Don't show toolbar when selecting inside an input area.
+      if (isNodeInInputArea(range.startContainer) || isNodeInInputArea(range.endContainer)) {
+        hideToolbar();
+        return;
+      }
       // Avoid showing the toolbar when the selection is already inside our own UI.
       if (
         (range.startContainer.parentElement &&
@@ -496,7 +536,7 @@
         return;
       }
       showToolbar(range);
-    }, 10);
+    }, 50);
   });
 
   document.addEventListener("mousedown", (e) => {
@@ -509,6 +549,16 @@
 
   function createHighlight(color, openNote) {
     if (!currentRange) return;
+    // Block highlight creation while Claude is mid-stream. The DOM is actively
+    // mutating so range anchors are unreliable and spans get wiped.
+    if (isStreaming()) {
+      if (toolbarEl) {
+        toolbarEl.style.background = "#dc2626";
+        toolbarEl.title = "Wait for Claude to finish responding before highlighting.";
+        setTimeout(hideToolbar, 800);
+      }
+      return;
+    }
     const convId = getConversationId();
     if (!convId) {
       alert("Open a specific chat to save highlights.");
