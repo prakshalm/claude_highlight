@@ -11,6 +11,12 @@ const exportBtn = document.getElementById("exportBtn");
 const clearBtn = document.getElementById("clearBtn");
 const siteHostEl = document.getElementById("siteHost");
 const siteStatusEl = document.getElementById("siteStatus");
+const driveStatusEl = document.getElementById("driveStatus");
+const driveConnectBtn = document.getElementById("driveConnectBtn");
+const driveActionsEl = document.getElementById("driveActions");
+const driveBackupBtn = document.getElementById("driveBackupBtn");
+const driveRestoreBtn = document.getElementById("driveRestoreBtn");
+const driveDisconnectBtn = document.getElementById("driveDisconnectBtn");
 
 function loadAll() {
   return new Promise((resolve) => {
@@ -152,6 +158,20 @@ function jumpToHighlight(targetUrl, highlightId) {
   });
 }
 
+// The tab whose chat we're viewing, so its notes can be surfaced first.
+let currentChatUrl = null;
+
+function sameChat(a, b) {
+  if (!a || !b) return false;
+  try {
+    const ua = new URL(a);
+    const ub = new URL(b);
+    return ua.origin === ub.origin && ua.pathname === ub.pathname;
+  } catch {
+    return false;
+  }
+}
+
 async function renderList() {
   const all = await loadAll();
   const q = (searchEl.value || "").toLowerCase().trim();
@@ -163,7 +183,8 @@ async function renderList() {
     return;
   }
 
-  let totalShown = 0;
+  // Collect conversations that have matches, so we can order + collapse them.
+  const sections = [];
   for (const key of keys) {
     const highlights = all[key] || [];
     const filtered = q
@@ -172,27 +193,53 @@ async function renderList() {
         )
       : highlights;
     if (!filtered.length) continue;
-
     const sample = filtered[0] || highlights[0];
     const info = describeKey(key, sample);
+    sections.push({ key, filtered, info, isCurrent: sameChat(info.url, currentChatUrl) });
+  }
 
+  if (!sections.length) {
+    listEl.innerHTML = '<div class="empty">No matches.</div>';
+    return;
+  }
+
+  // The chat you're looking at comes first; everything else stays collapsed
+  // below so the popup opens uncluttered.
+  sections.sort((a, b) => (b.isCurrent ? 1 : 0) - (a.isCurrent ? 1 : 0));
+
+  for (const { key, filtered, info, isCurrent } of sections) {
     const convDiv = document.createElement("div");
     convDiv.className = "conv";
+    // Expand automatically while searching so matches are visible; otherwise
+    // start collapsed and let the user open what they want.
+    if (q) convDiv.classList.add("expanded");
 
     const header = document.createElement("div");
     header.className = "conv-header";
-    const titleSpan = document.createElement("span");
-    titleSpan.textContent = `${info.hostLabel} · ${info.label} (${filtered.length})`;
-    header.appendChild(titleSpan);
+
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "conv-toggle";
+    toggle.innerHTML = `
+      <svg class="chev" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M9 6l6 6-6 6z"/></svg>
+      <span class="conv-title">${isCurrent ? '<span class="chip">This chat</span>' : ""}${escapeHtml(info.hostLabel)} · ${escapeHtml(info.label)}</span>
+      <span class="count">${filtered.length}</span>
+    `;
+    toggle.addEventListener("click", () => convDiv.classList.toggle("expanded"));
+    header.appendChild(toggle);
+
     const link = document.createElement("a");
+    link.className = "open-link";
     link.href = info.url;
     link.target = "_blank";
     link.textContent = "Open";
+    link.title = "Open chat in a new tab";
     header.appendChild(link);
     convDiv.appendChild(header);
 
+    const body = document.createElement("div");
+    body.className = "conv-body";
     for (const h of filtered) {
-      totalShown++;
       const item = document.createElement("div");
       item.className = "item";
       item.innerHTML = `
@@ -204,14 +251,10 @@ async function renderList() {
         if (e.target.classList.contains("del")) return;
         jumpToHighlight(h.url || info.url, h.id);
       });
-      convDiv.appendChild(item);
+      body.appendChild(item);
     }
-
+    convDiv.appendChild(body);
     listEl.appendChild(convDiv);
-  }
-
-  if (totalShown === 0) {
-    listEl.innerHTML = '<div class="empty">No matches.</div>';
   }
 
   listEl.querySelectorAll(".del").forEach((btn) => {
@@ -243,11 +286,175 @@ exportBtn.addEventListener("click", async () => {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
 
+const importBtn = document.getElementById("importBtn");
+const importFileEl = document.getElementById("importFile");
+
+// Accepts either a bare highlights object ({ convKey: [...] }) or the wrapped
+// backup envelope produced by the Drive backup ({ app, version, data }).
+function extractHighlights(parsed) {
+  const obj = parsed && parsed.data && typeof parsed.data === "object" ? parsed.data : parsed;
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
+  for (const v of Object.values(obj)) {
+    if (!Array.isArray(v)) return null; // every key must map to a highlights array
+  }
+  return obj;
+}
+
+// Merge imported highlights into existing storage: union per conversation key,
+// deduped by highlight id (imported version wins on conflict). Non-destructive
+// so importing never silently drops what's already there.
+function mergeHighlights(existing, incoming) {
+  const out = { ...existing };
+  for (const [key, list] of Object.entries(incoming)) {
+    const byId = new Map((out[key] || []).map((h) => [h.id, h]));
+    for (const h of list) byId.set(h.id, h);
+    out[key] = Array.from(byId.values());
+  }
+  return out;
+}
+
+importBtn.addEventListener("click", () => importFileEl.click());
+
+importFileEl.addEventListener("change", async () => {
+  const file = importFileEl.files && importFileEl.files[0];
+  importFileEl.value = ""; // allow re-importing the same file later
+  if (!file) return;
+  let parsed;
+  try {
+    parsed = JSON.parse(await file.text());
+  } catch {
+    alert("That file isn't valid JSON.");
+    return;
+  }
+  const incoming = extractHighlights(parsed);
+  if (!incoming) {
+    alert("That doesn't look like a Claude Highlights export.");
+    return;
+  }
+  const count = Object.values(incoming).reduce((n, arr) => n + arr.length, 0);
+  if (!confirm(`Import ${count} highlight(s) from this file? They'll be merged into your existing highlights.`)) return;
+  const merged = mergeHighlights(await loadAll(), incoming);
+  await saveAll(merged);
+  renderList();
+});
+
 clearBtn.addEventListener("click", async () => {
   if (!confirm("Delete ALL highlights and notes across all sites? This cannot be undone.")) return;
   await saveAll({});
   renderList();
 });
 
+// --- Google Drive backup ---------------------------------------------------
+
+function sendToBackground(message) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(message, (res) => {
+      if (chrome.runtime.lastError) {
+        resolve({ ok: false, error: chrome.runtime.lastError.message });
+      } else {
+        resolve(res || { ok: false, error: "No response" });
+      }
+    });
+  });
+}
+
+function setDriveStatus(text, kind) {
+  driveStatusEl.textContent = text;
+  driveStatusEl.className = "drive-status" + (kind ? " " + kind : "");
+}
+
+function relativeTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const diff = Date.now() - d.getTime();
+  if (diff < 60000) return "just now";
+  if (diff < 3600000) return Math.floor(diff / 60000) + "m ago";
+  if (diff < 86400000) return Math.floor(diff / 3600000) + "h ago";
+  return d.toLocaleDateString();
+}
+
+function applyDriveState(res) {
+  if (!res || !res.ok) {
+    setDriveStatus(res && res.error ? res.error : "Drive unavailable", "error");
+    return;
+  }
+  if (!res.configured) {
+    setDriveStatus("Not set up — add an OAuth client ID (see DRIVE_SETUP.md)", "error");
+    driveConnectBtn.disabled = true;
+    driveActionsEl.hidden = true;
+    return;
+  }
+  const meta = res.meta || {};
+  if (meta.connected) {
+    driveConnectBtn.hidden = true;
+    driveActionsEl.hidden = false;
+    if (meta.lastError) {
+      setDriveStatus("Last sync failed: " + meta.lastError, "error");
+    } else if (meta.lastBackupAt) {
+      setDriveStatus("Backed up " + relativeTime(meta.lastBackupAt), "ok");
+    } else {
+      setDriveStatus("Connected", "ok");
+    }
+  } else {
+    driveConnectBtn.hidden = false;
+    driveConnectBtn.disabled = false;
+    driveActionsEl.hidden = true;
+    setDriveStatus("Not connected — auto-backs up your highlights & notes");
+  }
+}
+
+async function refreshDriveStatus() {
+  applyDriveState(await sendToBackground({ type: "drive-status" }));
+}
+
+driveConnectBtn.addEventListener("click", async () => {
+  driveConnectBtn.disabled = true;
+  setDriveStatus("Connecting to Google…");
+  const res = await sendToBackground({ type: "drive-connect" });
+  driveConnectBtn.disabled = false;
+  applyDriveState({ ok: true, configured: true, meta: res.meta });
+  if (!res.ok) setDriveStatus(res.error || "Connection failed", "error");
+});
+
+driveBackupBtn.addEventListener("click", async () => {
+  driveBackupBtn.disabled = true;
+  setDriveStatus("Backing up…");
+  const res = await sendToBackground({ type: "drive-backup" });
+  driveBackupBtn.disabled = false;
+  applyDriveState({ ok: true, configured: true, meta: res.meta });
+  if (!res.ok) setDriveStatus(res.error || "Backup failed", "error");
+});
+
+driveRestoreBtn.addEventListener("click", async () => {
+  if (!confirm("Restore from Google Drive? This replaces ALL local highlights and notes with the Drive backup.")) return;
+  driveRestoreBtn.disabled = true;
+  setDriveStatus("Restoring from Drive…");
+  const res = await sendToBackground({ type: "drive-restore" });
+  driveRestoreBtn.disabled = false;
+  if (res.ok) {
+    applyDriveState({ ok: true, configured: true, meta: res.meta });
+    setDriveStatus("Restored" + (res.backedUpAt ? " (backup from " + formatDate(res.backedUpAt) + ")" : ""), "ok");
+    renderList();
+  } else {
+    setDriveStatus(res.error || "Restore failed", "error");
+  }
+});
+
+driveDisconnectBtn.addEventListener("click", async () => {
+  const res = await sendToBackground({ type: "drive-disconnect" });
+  applyDriveState({ ok: true, configured: true, meta: res.meta });
+});
+
+async function initList() {
+  try {
+    const tab = await getActiveTab();
+    currentChatUrl = (tab && tab.url) || null;
+  } catch {
+    currentChatUrl = null;
+  }
+  renderList();
+}
+
 activateOnCurrentTab();
-renderList();
+initList();
+refreshDriveStatus();

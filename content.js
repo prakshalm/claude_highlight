@@ -216,6 +216,8 @@
     closeSearchPanel();
     const g = document.getElementById("claude-hl-gutter");
     if (g) g.remove();
+    const c = document.getElementById("claude-hl-connectors");
+    if (c) c.remove();
     console.info("[Claude Highlighter] Extension context invalidated — disabling. Refresh the page after reloading the extension.");
   }
 
@@ -292,6 +294,11 @@
 
   // --- Right-side gutter: comment-style markers for highlights with notes ---
 
+  // Per-highlight user-pinned marker positions, in viewport (fixed) coords.
+  // Populated from storage in restoreHighlights() and updated on drag-end.
+  const markerPositions = {};
+  const MARKER_SIZE = 32;
+
   function ensureGutter() {
     let g = document.getElementById("claude-hl-gutter");
     if (!g) {
@@ -302,54 +309,409 @@
     return g;
   }
 
-  function positionMarkers() {
-    const gutter = ensureGutter();
-    const chat = findChatContainer();
-    const chatRect = chat && chat.getBoundingClientRect();
-    // x position: just outside the chat container's right edge, but always at
-    // least RIGHT_GAP clear of the inner viewport edge (clientWidth excludes
-    // the scrollbar, so RIGHT_GAP is pure breathing room past it).
-    const MARKER_W = 32;
-    const RIGHT_GAP = 40;
-    const viewportW = document.documentElement.clientWidth || window.innerWidth;
-    const maxX = viewportW - MARKER_W - RIGHT_GAP;
-    let markerX = maxX;
-    if (chatRect) {
-      markerX = Math.min(maxX, chatRect.right + 6);
-      markerX = Math.max(8, markerX);
+  const SVG_NS = "http://www.w3.org/2000/svg";
+
+  function ensureConnectors() {
+    let svg = document.getElementById("claude-hl-connectors");
+    if (!svg) {
+      svg = document.createElementNS(SVG_NS, "svg");
+      svg.id = "claude-hl-connectors";
+      document.body.appendChild(svg);
     }
+    const vw = document.documentElement.clientWidth || window.innerWidth;
+    const vh = document.documentElement.clientHeight || window.innerHeight;
+    svg.setAttribute("width", vw);
+    svg.setAttribute("height", vh);
+    return svg;
+  }
 
-    const seen = new Set();
-    document.querySelectorAll('.claude-hl[data-has-note="true"]').forEach((span) => {
-      const id = span.dataset.hlId;
-      if (seen.has(id)) return; // one marker per highlight
-      seen.add(id);
+  // Draw (or update) the dashed connector from a highlight span to its card.
+  // The curve leaves the highlight's right edge and eases into the card's left
+  // edge near its top, so the link reads clearly even when cards are stacked.
+  // Bounding box covering every span of a highlight (a wrapped selection is
+  // often several spans / lines), so the connector can leave the middle of the
+  // whole selection's edge rather than just the first line.
+  function unionRect(spans) {
+    let l = Infinity,
+      t = Infinity,
+      r = -Infinity,
+      b = -Infinity;
+    for (const s of spans) {
+      const rc = s.getBoundingClientRect();
+      if (rc.width === 0 && rc.height === 0) continue;
+      if (rc.left < l) l = rc.left;
+      if (rc.top < t) t = rc.top;
+      if (rc.right > r) r = rc.right;
+      if (rc.bottom > b) b = rc.bottom;
+    }
+    if (l === Infinity) return null;
+    return { left: l, top: t, right: r, bottom: b, width: r - l, height: b - t };
+  }
 
-      const rect = span.getBoundingClientRect();
-      if (rect.width === 0 && rect.height === 0) return;
+  const CONNECTOR_EDGE_PAD = 6; // start a touch outside the text so it reads as separate
 
-      let marker = gutter.querySelector(`[data-marker-id="${id}"]`);
-      if (!marker) {
-        marker = document.createElement("button");
-        marker.className = "claude-hl-marker";
-        marker.dataset.markerId = id;
-        marker.title = span.title || "View note";
-        marker.addEventListener("click", (e) => {
-          e.stopPropagation();
-          openNoteById(id, marker);
-        });
-        gutter.appendChild(marker);
-      } else {
-        marker.title = span.title || "View note";
+  function drawConnector(svg, id, spanRect, cardRect, stroke) {
+    if (!spanRect || !cardRect || cardRect.width === 0) return;
+    if (spanRect.width === 0 && spanRect.height === 0) return;
+    // Leave from the side of the highlight the card is on (its vertical middle),
+    // not from the centre of the text — and connect to the card's facing edge.
+    const cardCenterX = cardRect.left + cardRect.width / 2;
+    const spanCenterX = spanRect.left + spanRect.width / 2;
+    const onLeft = cardCenterX < spanCenterX;
+    const y1 = spanRect.top + spanRect.height / 2;
+    const x1 = onLeft ? spanRect.left - CONNECTOR_EDGE_PAD : spanRect.right + CONNECTOR_EDGE_PAD;
+    const x2 = onLeft ? cardRect.right : cardRect.left;
+    const y2 = cardRect.top + Math.min(18, cardRect.height / 2);
+    // Symmetric horizontal S-curve that works in either direction.
+    const mx = (x1 + x2) / 2;
+    const d = `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`;
+    let path = svg.querySelector(`path[data-conn="${id}"]`);
+    if (!path) {
+      path = document.createElementNS(SVG_NS, "path");
+      path.setAttribute("data-conn", id);
+      path.setAttribute("fill", "none");
+      path.setAttribute("stroke-width", "1.5");
+      path.setAttribute("stroke-dasharray", "4 4");
+      path.setAttribute("stroke-linecap", "round");
+      svg.appendChild(path);
+    }
+    path.setAttribute("d", d);
+    path.setAttribute("stroke", stroke || "rgba(154, 91, 0, 0.85)");
+  }
+
+  // Redraw one card's connector in isolation (used live during a drag).
+  function updateConnector(id) {
+    const svg = ensureConnectors();
+    const card = document.querySelector(`.claude-hl-marker[data-marker-id="${id}"]`);
+    const spans = document.querySelectorAll(`.claude-hl[data-hl-id="${id}"]`);
+    if (!card || !spans.length) return;
+    const rect = unionRect(spans);
+    if (!rect) return;
+    drawConnector(svg, id, rect, card.getBoundingClientRect(), card.dataset.stroke);
+  }
+
+  function clampMarkerPos(x, y) {
+    const viewportW = document.documentElement.clientWidth || window.innerWidth;
+    const viewportH = document.documentElement.clientHeight || window.innerHeight;
+    return {
+      // Keep the whole card on screen horizontally; a strip is enough vertically.
+      x: Math.max(4, Math.min(x, viewportW - CARD_W - 4)),
+      y: Math.max(4, Math.min(y, viewportH - MARKER_SIZE - 4)),
+    };
+  }
+
+  async function persistMarkerPosition(id, pos) {
+    const convId = getConversationId();
+    if (!convId) return;
+    const highlights = await getHighlightsForConv(convId);
+    const hl = highlights.find((h) => h.id === id);
+    if (!hl) return;
+    hl.markerPos = pos;
+    await saveHighlight(convId, hl);
+  }
+
+  // Attach drag + click behavior to a marker. Click opens the note; a drag of
+  // more than DRAG_THRESHOLD px pins the marker at the drop position and
+  // suppresses the trailing click.
+  function attachMarkerHandlers(marker, id) {
+    const DRAG_THRESHOLD = 4;
+    let startX = 0,
+      startY = 0;
+    let originLeft = 0,
+      originTop = 0;
+    let dragging = false;
+    let suppressClick = false;
+
+    const onPointerMove = (e) => {
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      if (!dragging && Math.hypot(dx, dy) >= DRAG_THRESHOLD) {
+        dragging = true;
+        marker.classList.add("dragging");
       }
-      marker.style.left = markerX + "px";
-      marker.style.top = Math.max(4, rect.top + rect.height / 2 - 16) + "px";
+      if (dragging) {
+        const { x, y } = clampMarkerPos(originLeft + dx, originTop + dy);
+        marker.style.left = x + "px";
+        marker.style.top = y + "px";
+        updateConnector(id); // keep the dashed line attached while dragging
+      }
+    };
+
+    const onPointerUp = async (e) => {
+      marker.removeEventListener("pointermove", onPointerMove);
+      marker.removeEventListener("pointerup", onPointerUp);
+      marker.removeEventListener("pointercancel", onPointerUp);
+      try {
+        if (marker.hasPointerCapture && marker.hasPointerCapture(e.pointerId)) {
+          marker.releasePointerCapture(e.pointerId);
+        }
+      } catch (_) {}
+      if (dragging) {
+        marker.classList.remove("dragging");
+        suppressClick = true;
+        // Reset on the next tick so a real subsequent click still works.
+        setTimeout(() => {
+          suppressClick = false;
+        }, 0);
+        // Store the drop position as an offset from the highlight span rather
+        // than absolute viewport coords, so the card travels with its highlight
+        // when the page scrolls (keeps the same horizontal indent, moves up/down).
+        const span = document.querySelector(`.claude-hl[data-hl-id="${id}"]`);
+        const sr = span ? span.getBoundingClientRect() : { left: 0, top: 0 };
+        const pos = {
+          relX: (parseFloat(marker.style.left) || 0) - sr.left,
+          relY: (parseFloat(marker.style.top) || 0) - sr.top,
+        };
+        markerPositions[id] = pos;
+        persistMarkerPosition(id, pos);
+      }
+      dragging = false;
+    };
+
+    marker.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      if (e.target.closest("button, textarea")) return; // don't drag when using the card's controls
+      startX = e.clientX;
+      startY = e.clientY;
+      const r = marker.getBoundingClientRect();
+      originLeft = r.left;
+      originTop = r.top;
+      try {
+        marker.setPointerCapture(e.pointerId);
+      } catch (_) {}
+      marker.addEventListener("pointermove", onPointerMove);
+      marker.addEventListener("pointerup", onPointerUp);
+      marker.addEventListener("pointercancel", onPointerUp);
     });
 
-    // Remove markers whose highlights no longer have notes / are gone.
+    // A plain click expands the card in place (showing the full note) or
+    // collapses it again. Clicks on the inner controls / edit box are ignored.
+    marker.addEventListener("click", (e) => {
+      if (suppressClick) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      if (e.target.closest("button, textarea")) return;
+      if (marker.classList.contains("editing")) return; // don't collapse mid-edit
+      e.stopPropagation();
+      marker.classList.toggle("expanded");
+      schedulePositionMarkers();
+    });
+  }
+
+  async function getHighlightById(id) {
+    const convId = getConversationId();
+    if (!convId) return null;
+    const highlights = await getHighlightsForConv(convId);
+    return highlights.find((h) => h.id === id) || null;
+  }
+
+  // Build a margin note-card: a collapsed preview that expands in place to show
+  // the full note, with inline Update (edit) and Delete-note controls.
+  function buildCard(id) {
+    const card = document.createElement("div");
+    card.className = "claude-hl-marker";
+    card.dataset.markerId = id;
+    card.tabIndex = 0;
+
+    const text = document.createElement("div");
+    text.className = "card-text";
+    card.appendChild(text);
+
+    const edit = document.createElement("textarea");
+    edit.className = "card-edit";
+    edit.placeholder = "Edit note…";
+    card.appendChild(edit);
+
+    const actions = document.createElement("div");
+    actions.className = "card-actions";
+
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "card-btn card-del";
+    del.textContent = "Delete";
+    del.title = "Delete this note (keeps the highlight)";
+    del.addEventListener("click", (e) => {
+      e.stopPropagation();
+      deleteCardNote(id);
+    });
+
+    const update = document.createElement("button");
+    update.type = "button";
+    update.className = "card-btn card-update";
+    update.textContent = "Update";
+    update.addEventListener("click", (e) => {
+      e.stopPropagation();
+      enterCardEdit(card);
+    });
+
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "card-btn card-cancel";
+    cancel.textContent = "Cancel";
+    cancel.addEventListener("click", (e) => {
+      e.stopPropagation();
+      card.classList.remove("editing");
+      schedulePositionMarkers();
+    });
+
+    const save = document.createElement("button");
+    save.type = "button";
+    save.className = "card-btn card-save";
+    save.textContent = "Save";
+    save.addEventListener("click", (e) => {
+      e.stopPropagation();
+      saveCardEdit(card, id);
+    });
+
+    actions.append(del, update, cancel, save);
+    card.appendChild(actions);
+
+    attachMarkerHandlers(card, id);
+    return card;
+  }
+
+  function enterCardEdit(card) {
+    const ta = card.querySelector(".card-edit");
+    ta.value = card.querySelector(".card-text").textContent;
+    card.classList.add("expanded", "editing");
+    schedulePositionMarkers();
+    setTimeout(() => ta.focus(), 0);
+  }
+
+  async function saveCardEdit(card, id) {
+    const ta = card.querySelector(".card-edit");
+    const value = (ta.value || "").trim();
+    const hl = await getHighlightById(id);
+    if (!hl) return;
+    hl.note = value;
+    await saveHighlight(getConversationId(), hl);
+    card.classList.remove("editing");
+    applyNoteState(id, value); // empty note drops the has-note flag → card removed
+    if (value) card.querySelector(".card-text").textContent = value;
+    schedulePositionMarkers();
+  }
+
+  async function deleteCardNote(id) {
+    const hl = await getHighlightById(id);
+    if (!hl) return;
+    hl.note = "";
+    await saveHighlight(getConversationId(), hl);
+    applyNoteState(id, ""); // highlight stays; only the note (and its card) go away
+    schedulePositionMarkers();
+  }
+
+  const CARD_W = 208;
+  const CARD_GAP_X = 28; // gap between where the highlighted text ends and the card
+  const CARD_GAP_Y = 10; // vertical gap between stacked cards
+  const CARD_MARGIN = 10; // min clearance from the left viewport edge
+  const CARD_RIGHT_PAD = 36; // clearance from the right edge / scrollbar — never hug it
+
+  function positionMarkers() {
+    const gutter = ensureGutter();
+    const svg = ensureConnectors();
+    const viewportW = document.documentElement.clientWidth || window.innerWidth;
+
+    // Group every span of each highlight so the card + connector use the whole
+    // selection's box (a wrapped highlight is several spans / lines).
+    const spansById = new Map();
+    document.querySelectorAll('.claude-hl[data-has-note="true"]').forEach((span) => {
+      const id = span.dataset.hlId;
+      let arr = spansById.get(id);
+      if (!arr) spansById.set(id, (arr = []));
+      arr.push(span);
+    });
+
+    const seen = new Set();
+    const entries = [];
+    for (const [id, spans] of spansById) {
+      const rect = unionRect(spans);
+      if (!rect) continue;
+      seen.add(id);
+      const first = spans[0];
+
+      let card = gutter.querySelector(`[data-marker-id="${id}"]`);
+      if (!card) {
+        card = buildCard(id);
+        gutter.appendChild(card);
+      }
+
+      const note = first.title || "";
+      const textEl = card.querySelector(".card-text");
+      // Don't overwrite the note preview while the user is editing this card.
+      if (!card.classList.contains("editing") && textEl.textContent !== note) {
+        textEl.textContent = note;
+      }
+      card.title = note || "View note";
+
+      // Tint the card and colour the connector to match the highlight.
+      const color = getComputedStyle(first).backgroundColor || "rgba(255, 235, 59, 0.7)";
+      const tint = setAlpha(color, 0.16);
+      card.style.backgroundImage = `linear-gradient(${tint}, ${tint})`;
+      card.style.borderColor = setAlpha(color, 0.5);
+      card.dataset.stroke = setAlpha(color, 0.85);
+
+      entries.push({ id, card, rect });
+    }
+
+    // Drop cards whose highlights lost their note / were removed.
     gutter.querySelectorAll(".claude-hl-marker").forEach((m) => {
       if (!seen.has(m.dataset.markerId)) m.remove();
     });
+    svg.querySelectorAll("path[data-conn]").forEach((p) => {
+      if (!seen.has(p.getAttribute("data-conn"))) p.remove();
+    });
+
+    // Position: pinned cards keep a fixed offset from their highlight; the rest
+    // stack in the auto column, pushed down to avoid overlapping each other.
+    const autos = [];
+    for (const e of entries) {
+      const pinned = markerPositions[e.id];
+      if (pinned) {
+        let relX, relY;
+        if (typeof pinned.relX === "number") {
+          relX = pinned.relX;
+          relY = pinned.relY;
+        } else {
+          // Migrate legacy viewport-anchored positions to span-relative once.
+          relX = (pinned.x || 0) - e.rect.left;
+          relY = (pinned.y || 0) - e.rect.top;
+          markerPositions[e.id] = { relX, relY };
+        }
+        let x = e.rect.left + relX;
+        // Clamp horizontally into view; let Y scroll off freely with the page.
+        x = Math.max(CARD_MARGIN, Math.min(x, viewportW - e.card.offsetWidth - CARD_RIGHT_PAD));
+        e.card.style.left = x + "px";
+        e.card.style.top = e.rect.top + relY + "px";
+      } else {
+        autos.push(e);
+      }
+    }
+
+    // Auto column sits just past where the highlighted text ends (derived from
+    // the highlights themselves, not a wide container guess), and always keeps a
+    // clear gap from the right edge / scrollbar.
+    let contentRight = 0;
+    for (const e of entries) contentRight = Math.max(contentRight, e.rect.right);
+    let cardX = contentRight + CARD_GAP_X;
+    cardX = Math.min(cardX, viewportW - CARD_W - CARD_RIGHT_PAD);
+    cardX = Math.max(CARD_MARGIN, cardX);
+
+    autos.sort((a, b) => a.rect.top - b.rect.top);
+    let cursor = -Infinity;
+    for (const e of autos) {
+      e.card.style.left = cardX + "px";
+      let y = e.rect.top;
+      if (y < cursor + CARD_GAP_Y) y = cursor + CARD_GAP_Y;
+      e.card.style.top = y + "px";
+      cursor = y + e.card.offsetHeight;
+    }
+
+    // Draw the dashed links last, once every card has its final rect.
+    for (const e of entries) {
+      drawConnector(svg, e.id, e.rect, e.card.getBoundingClientRect(), e.card.dataset.stroke);
+    }
   }
 
   let _markerRaf = 0;
@@ -367,21 +729,6 @@
 
   window.addEventListener("scroll", schedulePositionMarkers, true);
   window.addEventListener("resize", schedulePositionMarkers);
-
-  async function openNoteById(id, anchor) {
-    const convId = getConversationId();
-    if (!convId) return;
-    const highlights = await getHighlightsForConv(convId);
-    const hl = highlights.find((h) => h.id === id);
-    if (!hl) return;
-    // Prefer the explicit anchor (e.g. the gutter marker), else fall back to the
-    // highlight span in the document.
-    const anchorEl =
-      anchor ||
-      document.querySelector(`.claude-hl-marker[data-marker-id="${id}"]`) ||
-      document.querySelector(`.claude-hl[data-hl-id="${id}"]`);
-    if (anchorEl) openNotePopup(hl, anchorEl);
-  }
 
   function hexToRgba(hex, alpha) {
     const m = String(hex).match(/^#?([a-f0-9]{2})([a-f0-9]{2})([a-f0-9]{2})$/i);
@@ -623,6 +970,19 @@
     const container = findChatContainer();
     if (!container) return;
 
+    // Refresh user-pinned marker positions from storage. New positions are
+    // span-relative (relX/relY); legacy ones are viewport coords (x/y) and get
+    // migrated to relative on first positioning.
+    for (const hl of highlights) {
+      const p = hl.markerPos;
+      if (!p || typeof p !== "object") continue;
+      if (typeof p.relX === "number" && typeof p.relY === "number") {
+        markerPositions[hl.id] = { relX: p.relX, relY: p.relY };
+      } else if (typeof p.x === "number" && typeof p.y === "number") {
+        markerPositions[hl.id] = { x: p.x, y: p.y };
+      }
+    }
+
     for (const hl of highlights) {
       // Skip if already applied.
       if (document.querySelector(`.claude-hl[data-hl-id="${hl.id}"]`)) continue;
@@ -649,9 +1009,39 @@
     }
   }
 
-  async function openNotePopup(highlight, anchorEl) {
-    closeNotePopup();
+  // Position a floating popup next to its anchor — left of a gutter card, else
+  // under the highlighted text — clamped to the viewport.
+  function placePopup(wrap, anchorEl) {
     const rect = anchorEl.getBoundingClientRect();
+    const w = wrap.offsetWidth || 320;
+    const h = wrap.offsetHeight || 220;
+    const isMarker = anchorEl.classList && anchorEl.classList.contains("claude-hl-marker");
+    const RIGHT_PAD = 28;
+    let top, left;
+    if (isMarker) {
+      const gap = 8;
+      left = window.scrollX + rect.left - w - gap;
+      top = window.scrollY + rect.top + rect.height / 2 - h / 2;
+      if (left < window.scrollX + 8) {
+        left = window.scrollX + rect.left + rect.width / 2 - w / 2;
+        top = window.scrollY + rect.top - h - gap;
+      }
+      left = Math.max(window.scrollX + 8, Math.min(left, window.scrollX + window.innerWidth - w - RIGHT_PAD));
+      top = Math.max(window.scrollY + 8, Math.min(top, window.scrollY + window.innerHeight - h - 8));
+    } else {
+      top = window.scrollY + rect.bottom + 6;
+      left = window.scrollX + rect.left;
+      if (left + w > window.scrollX + window.innerWidth - RIGHT_PAD) {
+        left = window.scrollX + window.innerWidth - w - RIGHT_PAD;
+      }
+      left = Math.max(8, left);
+    }
+    wrap.style.top = top + "px";
+    wrap.style.left = left + "px";
+  }
+
+  async function openNotePopup(highlight, anchorEl, mode = "highlight") {
+    closeNotePopup();
 
     const wrap = document.createElement("div");
     wrap.className = "claude-hl-note";
@@ -774,9 +1164,19 @@
     brightnessLabel.textContent = Math.round(parseFloat(brightnessSlider.value) * 100) + "%";
     brightnessRow.appendChild(brightnessLabel);
 
+    // Keep the CSS track fill in sync with the handle position (min 0.15 → max 1).
+    const syncBrightnessFill = () => {
+      const min = parseFloat(brightnessSlider.min);
+      const max = parseFloat(brightnessSlider.max);
+      const pct = ((parseFloat(brightnessSlider.value) - min) / (max - min)) * 100;
+      brightnessSlider.style.setProperty("--fill", pct + "%");
+    };
+    syncBrightnessFill();
+
     brightnessSlider.addEventListener("input", () => {
       const a = parseFloat(brightnessSlider.value);
       brightnessLabel.textContent = Math.round(a * 100) + "%";
+      syncBrightnessFill();
       highlight.color = setAlpha(highlight.color, a);
       applyColors(highlight.id, highlight.color, null);
     });
@@ -797,8 +1197,19 @@
 
     const del = document.createElement("button");
     del.className = "delete";
-    del.textContent = "Delete";
+    // From the note side (opened via a card / "Update"), Delete removes only the
+    // note. From the highlight side (clicking the text), it removes the highlight.
+    del.textContent = mode === "note" ? "Delete note" : "Delete";
+    del.title = mode === "note" ? "Remove this note (keeps the highlight)" : "Remove this highlight";
     del.addEventListener("click", async () => {
+      if (mode === "note") {
+        highlight.note = "";
+        await saveHighlight(highlight.convId, highlight);
+        applyNoteState(highlight.id, "");
+        schedulePositionMarkers();
+        closeNotePopup();
+        return;
+      }
       await deleteHighlightFromStorage(highlight.convId, highlight.id);
       document.querySelectorAll(`.claude-hl[data-hl-id="${highlight.id}"]`).forEach((el) => {
         const parent = el.parentNode;
@@ -835,42 +1246,7 @@
     wrap.appendChild(actions);
 
     document.body.appendChild(wrap);
-
-    // Position the popup. When the anchor is a gutter marker, float it next to
-    // the marker like a hover tooltip (preferred side: left of the marker, since
-    // markers sit on the right edge of the chat). Otherwise, anchor it under the
-    // highlighted text as before.
-    const w = wrap.offsetWidth || 320;
-    const h = wrap.offsetHeight || 220;
-    const isMarker = anchorEl.classList && anchorEl.classList.contains("claude-hl-marker");
-
-    // Extra right-edge padding so the popup never sits flush against the
-    // scrollbar (typical scrollbar width ~15-17px; this leaves a clear gap).
-    const RIGHT_PAD = 28;
-    let top, left;
-    if (isMarker) {
-      const gap = 8;
-      left = window.scrollX + rect.left - w - gap;
-      top = window.scrollY + rect.top + rect.height / 2 - h / 2;
-      // If there's no room on the left of the marker, place above the marker.
-      if (left < window.scrollX + 8) {
-        left = window.scrollX + rect.left + rect.width / 2 - w / 2;
-        top = window.scrollY + rect.top - h - gap;
-      }
-      // Clamp to viewport.
-      left = Math.max(window.scrollX + 8, Math.min(left, window.scrollX + window.innerWidth - w - RIGHT_PAD));
-      top = Math.max(window.scrollY + 8, Math.min(top, window.scrollY + window.innerHeight - h - 8));
-    } else {
-      top = window.scrollY + rect.bottom + 6;
-      left = window.scrollX + rect.left;
-      if (left + w > window.scrollX + window.innerWidth - RIGHT_PAD) {
-        left = window.scrollX + window.innerWidth - w - RIGHT_PAD;
-      }
-      left = Math.max(8, left);
-    }
-    wrap.style.top = top + "px";
-    wrap.style.left = left + "px";
-
+    placePopup(wrap, anchorEl);
     noteEl = wrap;
     setTimeout(() => ta.focus(), 0);
   }
@@ -1099,6 +1475,9 @@
       hideToolbar();
       closeNotePopup();
       closeSearchPanel();
+      // Marker positions are per-conversation; drop the cache so the new
+      // conversation's highlights repopulate it from storage.
+      for (const k of Object.keys(markerPositions)) delete markerPositions[k];
     }
     scheduleRestore(300);
   });

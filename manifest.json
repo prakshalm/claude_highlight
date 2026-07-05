@@ -1,14 +1,23 @@
 {
   "manifest_version": 3,
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzrcOo1wutx3yhg5B7EQx4GdF1LSp3ZMLbq9SvmW1mJxKVqr2L/+fCxcpfrhKzzq4lfjwsnYos7NYYwvrzsYSyS6snkkB+IhMRNBjPoeBjn4UP09pJHQYs7SFNXev8TWHn/brn+tlbe8MZG1kvm85Q1i0ONKPEmCOQ+T8ZSMS57Rk1oxK102nGc+h9wRGmBTcNWSfakP5SUBa0ChwIaypL2UqNTG944b1KNqaxv74tw1PKGvU4N6q693QYhzP3VMiV+h1QvH5VTKCoV2o+h2EMXaBMyLlDjGBvdgEgH6+j2jTSHNC+LLhyPOJX/9FLTBCinH1CUQDSpMQ5Zlwf0GKHQIDAQAB",
   "name": "Claude Highlighter",
-  "version": "1.2.0",
-  "description": "Highlight AI assistant responses (Claude, ChatGPT, and any site you enable), take notes, and have them persist across reloads.",
-  "permissions": ["storage", "scripting", "tabs", "activeTab"],
+  "version": "1.3.0",
+  "description": "Highlight AI responses on Claude, ChatGPT, and other sites; take notes with draggable markers that persist across reloads.",
+  "permissions": ["storage", "scripting", "tabs", "activeTab", "identity"],
   "host_permissions": [
     "https://claude.ai/*",
     "https://chatgpt.com/*",
-    "https://chat.openai.com/*"
+    "https://chat.openai.com/*",
+    "https://www.googleapis.com/*"
   ],
+  "oauth2": {
+    "client_id": "262834513856-trp3lkqaon5tm58b77gts30sqj1lhcbt.apps.googleusercontent.com",
+    "scopes": ["https://www.googleapis.com/auth/drive.appdata"]
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
   "content_scripts": [
     {
       "matches": [
