@@ -9,11 +9,26 @@
   <rect x="6" y="6" width="116" height="116" rx="28" fill="url(#sheen)"/>
   <!-- text lines (muted cream), optically centered -->
   <g fill="#e0d0ba">
-    <rect x="30" y="34" width="52" height="7" rx="3.5"/>
-    <rect x="30" y="80" width="60" height="7" rx="3.5"/>
-    <rect x="30" y="96" width="40" height="7" rx="3.5"/>
+    <rect x="26" y="34" width="42" height="7" rx="3.5"/>
+    <rect x="26" y="80" width="60" height="7" rx="3.5"/>
+    <rect x="26" y="96" width="40" height="7" rx="3.5"/>
   </g>
   <!-- hero: amber highlight swipe with overshoot, over a text line -->
-  <rect x="26" y="52" width="80" height="18" rx="9" fill="#ffb95c"/>
-  <rect x="30" y="58" width="60" height="7" rx="3.5" fill="#7a4a12"/>
+  <rect x="22" y="52" width="80" height="18" rx="9" fill="#ffb95c"/>
+  <rect x="26" y="58" width="60" height="7" rx="3.5" fill="#7a4a12"/>
+  <!-- chat bubble (a highlighted message), pale amber so the swipe stays hero -->
+  <g>
+    <!-- bg-colored knockout: a clean gap that lifts the bubble off the note -->
+    <path d="M78 39 L86 51 L98 42 Z" fill="#2b1d0e"/>
+    <rect x="68" y="5" width="54" height="42" rx="15" fill="#2b1d0e"/>
+    <!-- bubble tail, pointing down toward the note (clears the highlight) -->
+    <path d="M82 41 L86 49 L95 42 Z" fill="#ffddb3"/>
+    <!-- bubble body -->
+    <rect x="72" y="9" width="46" height="34" rx="13" fill="#ffddb3"/>
+    <!-- message lines inside the bubble -->
+    <g fill="#9a5b00">
+      <rect x="82" y="19" width="26" height="5" rx="2.5"/>
+      <rect x="82" y="28" width="16" height="5" rx="2.5"/>
+    </g>
+  </g>
 </svg>
