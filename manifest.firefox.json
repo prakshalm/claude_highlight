@@ -1,9 +1,14 @@
 {
   "manifest_version": 3,
-  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzrcOo1wutx3yhg5B7EQx4GdF1LSp3ZMLbq9SvmW1mJxKVqr2L/+fCxcpfrhKzzq4lfjwsnYos7NYYwvrzsYSyS6snkkB+IhMRNBjPoeBjn4UP09pJHQYs7SFNXev8TWHn/brn+tlbe8MZG1kvm85Q1i0ONKPEmCOQ+T8ZSMS57Rk1oxK102nGc+h9wRGmBTcNWSfakP5SUBa0ChwIaypL2UqNTG944b1KNqaxv74tw1PKGvU4N6q693QYhzP3VMiV+h1QvH5VTKCoV2o+h2EMXaBMyLlDjGBvdgEgH6+j2jTSHNC+LLhyPOJX/9FLTBCinH1CUQDSpMQ5Zlwf0GKHQIDAQAB",
   "name": "LumiNote",
   "version": "2.0.0",
   "description": "Highlight AI responses on Claude, ChatGPT, and other sites; take notes with draggable markers that persist across reloads.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "claude-highlighter@prakshalm",
+      "strict_min_version": "121.0"
+    }
+  },
   "permissions": ["storage", "scripting", "tabs", "activeTab", "identity"],
   "host_permissions": [
     "https://claude.ai/*",
@@ -16,7 +21,7 @@
     "scopes": ["https://www.googleapis.com/auth/drive.appdata"]
   },
   "background": {
-    "service_worker": "background.js"
+    "scripts": ["background.js"]
   },
   "content_scripts": [
     {
