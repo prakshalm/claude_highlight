@@ -18,7 +18,10 @@ const STORAGE_KEY = "claude_highlights_v1";
 const SYNC_META_KEY = "claude_highlights_sync_v1"; // never itself backed up
 const BACKUP_FILE_NAME = "claude-highlights-backup.json";
 const SCOPES = ["https://www.googleapis.com/auth/drive.appdata"];
-const AUTO_BACKUP_DEBOUNCE_MS = 4000;
+// Short debounce so a backup fires almost as soon as a highlight/note is taken,
+// while still coalescing the burst of writes a single action produces (the
+// highlight span, its save, an attached note, color tweaks) into one upload.
+const AUTO_BACKUP_DEBOUNCE_MS = 800;
 
 // --- Sync metadata ---------------------------------------------------------
 // { connected, lastBackupAt, lastRestoreAt, lastError, fileId, lastHash }
@@ -79,6 +82,39 @@ function isConfigured() {
 // cache in memory and silently re-mint (prompt=none) when possible.
 let cachedToken = null; // { token, expiresAt }
 
+// MV3 evicts the service worker after ~30s idle, which wipes `cachedToken` and
+// forces a silent re-mint on every wake — the silent flow often comes back with
+// interaction_required, which is what surfaces as the constant "Reconnect"
+// prompt. Persisting the token in session storage (in-memory, cleared on
+// browser close, never written to disk) lets a single ~1h token survive dozens
+// of worker evictions, so we almost never hit the re-auth path.
+const TOKEN_CACHE_KEY = "claude_drive_token_v1";
+
+async function loadStoredToken() {
+  try {
+    const res = await chrome.storage.session.get([TOKEN_CACHE_KEY]);
+    return res[TOKEN_CACHE_KEY] || null;
+  } catch (e) {
+    return null; // session storage unavailable → fall back to per-wake minting
+  }
+}
+
+async function storeToken(tok) {
+  try {
+    await chrome.storage.session.set({ [TOKEN_CACHE_KEY]: tok });
+  } catch (e) {
+    /* non-fatal: token just won't survive the next eviction */
+  }
+}
+
+async function clearStoredToken() {
+  try {
+    await chrome.storage.session.remove([TOKEN_CACHE_KEY]);
+  } catch (e) {
+    /* ignore */
+  }
+}
+
 function buildAuthUrl(interactive) {
   const params = new URLSearchParams({
     client_id: getClientId(),
@@ -115,20 +151,33 @@ function launchAuth(interactive) {
 }
 
 async function getAuthToken(interactive) {
+  // 1. In-memory cache — fastest, valid within one worker lifetime.
   if (cachedToken && cachedToken.expiresAt > Date.now()) return cachedToken.token;
+  // 2. Session-storage cache — survives worker eviction. This is what keeps us
+  //    off the re-auth path across the frequent MV3 worker restarts.
+  const stored = await loadStoredToken();
+  if (stored && stored.expiresAt > Date.now()) {
+    cachedToken = stored;
+    return cachedToken.token;
+  }
+  // 3. Mint a fresh token.
   try {
     cachedToken = await launchAuth(false); // try silent first, even when interactive
   } catch (e) {
     if (!interactive) throw e;
     cachedToken = await launchAuth(true); // fall back to the consent window
   }
+  await storeToken(cachedToken);
   return cachedToken.token;
 }
 
-// launchWebAuthFlow keeps no token cache of its own, so this just clears ours.
-function removeCachedToken(token) {
-  if (!token || (cachedToken && cachedToken.token === token)) cachedToken = null;
-  return Promise.resolve();
+// launchWebAuthFlow keeps no token cache of its own, so this just clears ours
+// (both the in-memory copy and the persisted one).
+async function removeCachedToken(token) {
+  if (!token || (cachedToken && cachedToken.token === token)) {
+    cachedToken = null;
+    await clearStoredToken();
+  }
 }
 
 // Implicit-flow tokens can't be refreshed silently forever: once the Google
