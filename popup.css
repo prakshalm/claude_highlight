@@ -215,6 +215,15 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.drive-account {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--on-surface);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .drive-status.error {
   color: var(--error);
 }
@@ -234,6 +243,12 @@ body {
   margin-top: 12px;
   padding-top: 12px;
   border-top: 1px solid var(--outline-variant);
+}
+
+/* The [hidden] attribute must win over element display rules like
+   .btn { display: inline-flex } and .drive-actions { display: flex }. */
+[hidden] {
+  display: none !important;
 }
 
 /* --- Material buttons ----------------------------------------------------- */

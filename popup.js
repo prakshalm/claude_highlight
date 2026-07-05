@@ -12,6 +12,7 @@ const clearBtn = document.getElementById("clearBtn");
 const siteHostEl = document.getElementById("siteHost");
 const siteStatusEl = document.getElementById("siteStatus");
 const driveStatusEl = document.getElementById("driveStatus");
+const driveAccountEl = document.getElementById("driveAccount");
 const driveConnectBtn = document.getElementById("driveConnectBtn");
 const driveActionsEl = document.getElementById("driveActions");
 const driveBackupBtn = document.getElementById("driveBackupBtn");
@@ -338,8 +339,35 @@ importFileEl.addEventListener("change", async () => {
   renderList();
 });
 
+// confirm() is unreliable inside extension popups (Chrome can suppress the
+// dialog and return false, silently aborting the action), so destructive
+// buttons confirm via a two-click "arm": the first click swaps the button to a
+// warning label; a second click within 4s proceeds. Returns true only on that
+// confirming second click.
+const armedButtons = new WeakMap();
+function armConfirm(btn, armedLabel) {
+  const state = armedButtons.get(btn);
+  if (state) {
+    clearTimeout(state.timer);
+    armedButtons.delete(btn);
+    btn.textContent = state.label;
+    btn.classList.remove("danger");
+    return true;
+  }
+  const label = btn.textContent;
+  btn.textContent = armedLabel;
+  btn.classList.add("danger");
+  const timer = setTimeout(() => {
+    armedButtons.delete(btn);
+    btn.textContent = label;
+    btn.classList.remove("danger");
+  }, 4000);
+  armedButtons.set(btn, { label, timer });
+  return false;
+}
+
 clearBtn.addEventListener("click", async () => {
-  if (!confirm("Delete ALL highlights and notes across all sites? This cannot be undone.")) return;
+  if (!armConfirm(clearBtn, "Click again to delete all")) return;
   await saveAll({});
   renderList();
 });
@@ -388,6 +416,12 @@ function applyDriveState(res) {
   if (meta.connected) {
     driveConnectBtn.hidden = true;
     driveActionsEl.hidden = false;
+    if (meta.email) {
+      driveAccountEl.textContent = "Linked to " + meta.email;
+      driveAccountEl.hidden = false;
+    } else {
+      driveAccountEl.hidden = true;
+    }
     if (meta.lastError) {
       setDriveStatus("Last sync failed: " + meta.lastError, "error");
     } else if (meta.lastBackupAt) {
@@ -399,6 +433,7 @@ function applyDriveState(res) {
     driveConnectBtn.hidden = false;
     driveConnectBtn.disabled = false;
     driveActionsEl.hidden = true;
+    driveAccountEl.hidden = true;
     setDriveStatus("Not connected — auto-backs up your highlights & notes");
   }
 }
@@ -426,7 +461,6 @@ driveBackupBtn.addEventListener("click", async () => {
 });
 
 driveRestoreBtn.addEventListener("click", async () => {
-  if (!confirm("Restore from Google Drive? This replaces ALL local highlights and notes with the Drive backup.")) return;
   driveRestoreBtn.disabled = true;
   setDriveStatus("Restoring from Drive…");
   const res = await sendToBackground({ type: "drive-restore" });

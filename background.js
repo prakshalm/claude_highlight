@@ -45,30 +45,83 @@ function hashData(obj) {
 }
 
 // --- OAuth -----------------------------------------------------------------
+//
+// We use chrome.identity.launchWebAuthFlow (OAuth implicit flow) rather than
+// chrome.identity.getAuthToken. getAuthToken relies on the "Chrome Extension"
+// OAuth client type, which Google's backend now rejects with
+// "Custom URI scheme is not supported on Chrome apps" (Error 400:
+// invalid_request). launchWebAuthFlow instead redirects to
+// https://<ext-id>.chromiumapp.org/ — a normal https redirect that works with
+// a standard "Web application" OAuth client.
+//
+// Requires a Web application OAuth client whose Authorized redirect URI is
+// exactly chrome.identity.getRedirectURL() (see DRIVE_SETUP.md). Put that
+// client ID in manifest.json → oauth2.client_id.
+
+function getClientId() {
+  const oauth = chrome.runtime.getManifest().oauth2;
+  return (oauth && oauth.client_id) || "";
+}
 
 function isConfigured() {
-  const oauth = chrome.runtime.getManifest().oauth2;
-  const id = oauth && oauth.client_id;
+  const id = getClientId();
   return !!id && !/YOUR_GOOGLE|REPLACE_ME/i.test(id);
 }
 
-function getAuthToken(interactive) {
+// Implicit-flow tokens are short-lived (~1h) and carry no refresh token, so we
+// cache in memory and silently re-mint (prompt=none) when possible.
+let cachedToken = null; // { token, expiresAt }
+
+function buildAuthUrl(interactive) {
+  const params = new URLSearchParams({
+    client_id: getClientId(),
+    response_type: "token",
+    redirect_uri: chrome.identity.getRedirectURL(),
+    scope: SCOPES.join(" "),
+  });
+  // Non-interactive: never show UI; fail fast if consent/session is missing.
+  if (!interactive) params.set("prompt", "none");
+  return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+}
+
+function launchAuth(interactive) {
   return new Promise((resolve, reject) => {
-    chrome.identity.getAuthToken({ interactive }, (token) => {
-      if (chrome.runtime.lastError || !token) {
-        reject(new Error(chrome.runtime.lastError ? chrome.runtime.lastError.message : "No token"));
-      } else {
-        resolve(token);
-      }
-    });
+    chrome.identity.launchWebAuthFlow(
+      { url: buildAuthUrl(interactive), interactive },
+      (redirect) => {
+        if (chrome.runtime.lastError || !redirect) {
+          return reject(new Error(chrome.runtime.lastError ? chrome.runtime.lastError.message : "Authorization was cancelled"));
+        }
+        // Token comes back in the URL fragment: #access_token=…&expires_in=…
+        const frag = new URL(redirect).hash.slice(1);
+        const p = new URLSearchParams(frag);
+        const err = p.get("error");
+        if (err) return reject(new Error(err));
+        const token = p.get("access_token");
+        if (!token) return reject(new Error("No access token in OAuth response"));
+        const expiresIn = parseInt(p.get("expires_in") || "3600", 10);
+        // Retire the token 60s early to avoid mid-request expiry.
+        resolve({ token, expiresAt: Date.now() + (expiresIn - 60) * 1000 });
+      },
+    );
   });
 }
 
+async function getAuthToken(interactive) {
+  if (cachedToken && cachedToken.expiresAt > Date.now()) return cachedToken.token;
+  try {
+    cachedToken = await launchAuth(false); // try silent first, even when interactive
+  } catch (e) {
+    if (!interactive) throw e;
+    cachedToken = await launchAuth(true); // fall back to the consent window
+  }
+  return cachedToken.token;
+}
+
+// launchWebAuthFlow keeps no token cache of its own, so this just clears ours.
 function removeCachedToken(token) {
-  return new Promise((resolve) => {
-    if (!token) return resolve();
-    chrome.identity.removeCachedAuthToken({ token }, resolve);
-  });
+  if (!token || (cachedToken && cachedToken.token === token)) cachedToken = null;
+  return Promise.resolve();
 }
 
 // Fetch against a Drive endpoint, transparently refreshing a stale token once.
@@ -183,6 +236,19 @@ async function downloadBackup(interactive) {
   return { data, fileId, backedUpAt: parsed && parsed.backedUpAt };
 }
 
+// Which Google account is linked. about.get with the user field works under
+// the drive.appdata scope, so we don't need any extra profile/email scope.
+async function fetchAccountEmail(interactive) {
+  const res = await driveFetch(
+    "https://www.googleapis.com/drive/v3/about?fields=user(emailAddress,displayName)",
+    {},
+    interactive,
+  );
+  if (!res.ok) throw new Error(`Drive about failed (${res.status})`);
+  const data = await res.json();
+  return (data.user && (data.user.emailAddress || data.user.displayName)) || null;
+}
+
 // --- Auto-backup on any highlight/note change ------------------------------
 
 let backupTimer = null;
@@ -201,6 +267,10 @@ async function runAutoBackup() {
     if (!meta.connected || !isConfigured()) return;
     const store = await chrome.storage.local.get([STORAGE_KEY]);
     const data = store[STORAGE_KEY] || {};
+    // Never auto-overwrite the Drive backup with an empty store (e.g. right
+    // after a reinstall, before the user has restored). "Back up now" can still
+    // push an empty state explicitly if that's really wanted.
+    if (Object.keys(data).length === 0) return;
     if (hashData(data) === meta.lastHash) return; // nothing actually changed
     await uploadBackup(false);
   } catch (e) {
@@ -230,7 +300,25 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }
         case "drive-connect": {
           await getAuthToken(true); // triggers the Google consent screen
-          await uploadBackup(true); // seed the backup immediately on connect
+          // Mark connected as soon as auth succeeds so the popup flips to the
+          // connected UI even if the initial backup upload hiccups.
+          const email = await fetchAccountEmail(false).catch(() => null);
+          await setMeta({ connected: true, email, lastError: null });
+          try {
+            // Never clobber an existing Drive backup on connect. After a
+            // reinstall local storage is empty, so seeding here would overwrite
+            // a good backup with {} — and the user could never restore it.
+            // Adopt any existing file and leave its contents for the user to
+            // Restore; only seed a fresh backup when none exists yet.
+            const existingId = await findBackupFileId(false);
+            if (existingId) {
+              await setMeta({ fileId: existingId });
+            } else {
+              await uploadBackup(true);
+            }
+          } catch (e) {
+            await setMeta({ lastError: String(e && e.message ? e.message : e) });
+          }
           sendResponse({ ok: true, meta: await getMeta() });
           break;
         }
@@ -243,7 +331,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
               await fetch(`https://oauth2.googleapis.com/revoke?token=${token}`, { method: "POST" }).catch(() => {});
             }
           } catch (_) {}
-          await setMeta({ connected: false, lastError: null });
+          await setMeta({ connected: false, email: null, lastError: null });
           sendResponse({ ok: true, meta: await getMeta() });
           break;
         }
