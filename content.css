@@ -1,3 +1,9 @@
+/* Claude Highlighter — in-page surfaces (Material Design 3).
+   Toolbar, note popup and search panel float over arbitrary host pages, so all
+   design tokens are scoped to the component roots (never :root) to avoid
+   clobbering the host site's own variables. Amber-highlighter accent, matching
+   the extension popup. Light + dark via prefers-color-scheme. */
+
 /* Highlight span styling */
 .claude-hl {
   background-color: rgba(255, 235, 59, 0.7);
@@ -17,11 +23,11 @@
 .claude-hl:hover {
   filter: brightness(0.96);
 }
-/* No underline on highlights with notes — the right-side marker is the note
-   indicator. */
 
-
-/* Right-side gutter holding comment markers, like Google Docs. */
+/* Margin note-cards, connected to their highlights by dashed lines (Google
+   Docs / Gemini comment style). The gutter holds the cards; the SVG below it
+   holds the connector paths. Both are fixed overlays; content.js repositions
+   them every scroll frame so cards travel with their highlight. */
 #claude-hl-gutter {
   position: fixed;
   top: 0;
@@ -31,40 +37,257 @@
   pointer-events: none;
   z-index: 2147483646;
 }
-.claude-hl-marker {
+#claude-hl-connectors {
   position: fixed;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  border: none;
-  background-color: #f59e0b;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'/><line x1='12' y1='7' x2='12' y2='11'/><line x1='12' y1='13' x2='12.01' y2='13'/></svg>");
-  background-size: 14px 14px;
-  background-repeat: no-repeat;
-  background-position: center;
-  cursor: pointer;
-  pointer-events: auto;
-  padding: 0;
-  outline: none;
-  box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.08),
-    0 4px 10px rgba(245, 158, 11, 0.35),
-    inset 0 1px 0 rgba(255, 255, 255, 0.25);
-  transition: transform 0.16s cubic-bezier(0.4, 0, 0.2, 1),
-    box-shadow 0.16s cubic-bezier(0.4, 0, 0.2, 1);
-}
-.claude-hl-marker:hover {
-  transform: scale(1.08);
-  box-shadow:
-    0 2px 4px rgba(0, 0, 0, 0.1),
-    0 8px 18px rgba(245, 158, 11, 0.55),
-    inset 0 1px 0 rgba(255, 255, 255, 0.3);
-}
-.claude-hl-marker:active {
-  transform: scale(0.96);
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  z-index: 2147483645;
+  overflow: visible;
 }
 
-/* Search panel (Alt+H). */
+.claude-hl-marker {
+  --card-base: #fffdf8;
+  --card-accent: #9a5b00;
+  --card-accent-on: #ffffff;
+  --card-muted: #7a6a53;
+  --card-error: #ba1a1a;
+  position: fixed;
+  box-sizing: border-box;
+  width: 208px;
+  max-height: 132px;
+  overflow: hidden;
+  margin: 0;
+  padding: 10px 30px 10px 12px;
+  border: 1px solid rgba(60, 45, 20, 0.14);
+  border-radius: 12px;
+  background-color: var(--card-base);
+  color: #2a2115;
+  font-family: "Roboto", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: left;
+  cursor: grab;
+  pointer-events: auto;
+  touch-action: none;
+  outline: none;
+  box-shadow:
+    0 1px 2px rgba(60, 45, 20, 0.12),
+    0 8px 22px rgba(60, 45, 20, 0.16);
+  transition: transform 0.14s cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 0.14s cubic-bezier(0.4, 0, 0.2, 1);
+}
+@media (prefers-color-scheme: dark) {
+  .claude-hl-marker {
+    --card-base: #2a241c;
+    --card-accent: #ffb95c;
+    --card-accent-on: #4d2600;
+    --card-muted: #b6a691;
+    --card-error: #ffb4ab;
+    color: #ece0d0;
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+}
+/* Small pin glyph in the corner, echoing the "pinned note" affordance. */
+.claude-hl-marker::after {
+  content: "";
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  width: 12px;
+  height: 12px;
+  background: currentColor;
+  opacity: 0.32;
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z'/></svg>") center / contain no-repeat;
+  mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z'/></svg>") center / contain no-repeat;
+  pointer-events: none;
+}
+.claude-hl-marker .card-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.claude-hl-marker:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    0 2px 6px rgba(60, 45, 20, 0.18),
+    0 14px 32px rgba(60, 45, 20, 0.22);
+}
+.claude-hl-marker:focus-visible {
+  outline: 2px solid #9a5b00;
+  outline-offset: 2px;
+}
+.claude-hl-marker.dragging {
+  cursor: grabbing;
+  transform: scale(1.02);
+  transition: none;
+  box-shadow:
+    0 6px 14px rgba(0, 0, 0, 0.2),
+    0 20px 44px rgba(60, 45, 20, 0.3);
+}
+
+/* --- Expanded (full note) + inline edit ----------------------------------- */
+.claude-hl-marker.expanded {
+  max-height: none;
+  overflow: visible;
+  cursor: default;
+}
+.claude-hl-marker.expanded:hover {
+  transform: none;
+}
+.claude-hl-marker.expanded .card-text {
+  display: block;
+  -webkit-line-clamp: none;
+  line-clamp: none;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.claude-hl-marker.expanded::after {
+  display: none; /* hide the pin glyph once actions are shown */
+}
+
+/* Inline edit box (shown only in editing state). */
+.claude-hl-marker .card-edit {
+  display: none;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 2px;
+  border: 1px solid var(--card-muted);
+  border-radius: 8px;
+  background: var(--card-base);
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 8px;
+  resize: vertical;
+  min-height: 68px;
+}
+.claude-hl-marker .card-edit:focus {
+  outline: none;
+  border-color: var(--card-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--card-accent) 22%, transparent);
+}
+.claude-hl-marker.editing .card-text {
+  display: none;
+}
+.claude-hl-marker.editing .card-edit {
+  display: block;
+}
+
+/* Action row: appears only when expanded. */
+.claude-hl-marker .card-actions {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+.claude-hl-marker.expanded .card-actions {
+  display: flex;
+}
+.claude-hl-marker .card-btn {
+  border: none;
+  border-radius: 999px;
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.claude-hl-marker .card-update,
+.claude-hl-marker .card-save {
+  background: var(--card-accent);
+  color: var(--card-accent-on);
+  margin-left: auto; /* pin the primary action to the bottom-right */
+}
+.claude-hl-marker .card-del,
+.claude-hl-marker .card-cancel {
+  background: transparent;
+  color: var(--card-muted);
+}
+.claude-hl-marker .card-del:hover {
+  color: var(--card-error);
+  background: color-mix(in srgb, var(--card-error) 14%, transparent);
+}
+.claude-hl-marker .card-cancel {
+  margin-left: auto; /* push cancel + save together to the right in edit mode */
+}
+.claude-hl-marker .card-cancel:hover {
+  color: inherit;
+}
+/* Toggle which buttons show per state. */
+.claude-hl-marker .card-cancel,
+.claude-hl-marker .card-save {
+  display: none;
+}
+.claude-hl-marker.editing .card-del,
+.claude-hl-marker.editing .card-update {
+  display: none;
+}
+.claude-hl-marker.editing .card-cancel,
+.claude-hl-marker.editing .card-save {
+  display: inline-flex;
+}
+.claude-hl-marker .card-btn:focus-visible {
+  outline: 2px solid var(--card-accent);
+  outline-offset: 2px;
+}
+
+/* --- Shared theme tokens for the light/dark floating surfaces ------------- */
+.claude-hl-note,
+.claude-hl-search {
+  --hl-primary: #9a5b00;
+  --hl-on-primary: #ffffff;
+  --hl-primary-container: #ffddb3;
+  --hl-on-primary-container: #301b00;
+  --hl-surface: #fffbf5;
+  --hl-surface-container: #f7eddf;
+  --hl-surface-high: #f1e7d9;
+  --hl-on-surface: #201b13;
+  --hl-on-surface-variant: #514537;
+  --hl-outline: #837567;
+  --hl-outline-variant: #d5c4b0;
+  --hl-error: #ba1a1a;
+  --hl-shadow: rgba(60, 45, 20, 0.22);
+  --hl-state: rgba(154, 91, 0, 0.1);
+  --hl-radius-lg: 16px;
+  --hl-radius-md: 12px;
+  --hl-radius-sm: 8px;
+  --hl-radius-full: 999px;
+  font-family: "Roboto", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  .claude-hl-note,
+  .claude-hl-search {
+    --hl-primary: #ffb95c;
+    --hl-on-primary: #4d2600;
+    --hl-primary-container: #6e3b00;
+    --hl-on-primary-container: #ffddb3;
+    --hl-surface: #26201a;
+    --hl-surface-container: #322b23;
+    --hl-surface-high: #3c352b;
+    --hl-on-surface: #ece0d0;
+    --hl-on-surface-variant: #d5c4b0;
+    --hl-outline: #9d8e7c;
+    --hl-outline-variant: #514537;
+    --hl-error: #ffb4ab;
+    --hl-shadow: rgba(0, 0, 0, 0.55);
+    --hl-state: rgba(255, 185, 92, 0.14);
+  }
+}
+
+.claude-hl-note :focus-visible,
+.claude-hl-search :focus-visible {
+  outline: 2px solid var(--hl-primary);
+  outline-offset: 2px;
+}
+
+/* --- Search panel (Alt+H) ------------------------------------------------- */
 .claude-hl-search {
   position: fixed;
   top: 64px;
@@ -73,45 +296,51 @@
   width: 520px;
   max-width: 92vw;
   max-height: 70vh;
-  background: white;
-  color: #111827;
-  border-radius: 12px;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+  background: var(--hl-surface);
+  color: var(--hl-on-surface);
+  border-radius: var(--hl-radius-lg);
+  box-shadow: 0 24px 60px var(--hl-shadow);
   z-index: 2147483647;
   display: flex;
   flex-direction: column;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   overflow: hidden;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--hl-outline-variant);
 }
 .claude-hl-search .search-input {
   border: none;
   outline: none;
-  padding: 14px 16px;
+  padding: 16px 18px;
   font: inherit;
   font-size: 14px;
   background: transparent;
-  color: #111827;
-  border-bottom: 1px solid #e5e7eb;
+  color: var(--hl-on-surface);
+  border-bottom: 1px solid var(--hl-outline-variant);
 }
 .claude-hl-search .search-input::placeholder {
-  color: #9ca3af;
+  color: var(--hl-on-surface-variant);
 }
 .claude-hl-search .search-list {
   overflow: auto;
   flex: 1;
-  padding: 6px;
+  padding: 8px;
 }
 .claude-hl-search .item {
-  padding: 8px 10px;
-  border-radius: 8px;
+  padding: 10px 12px;
+  border-radius: var(--hl-radius-md);
   cursor: pointer;
   margin-bottom: 2px;
   border: 1px solid transparent;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.claude-hl-search .item:hover {
+  background: var(--hl-surface-container);
 }
 .claude-hl-search .item.active {
-  background: #fef3c7;
-  border-color: #fbbf24;
+  background: var(--hl-primary-container);
+  border-color: var(--hl-primary);
+}
+.claude-hl-search .item.active .note {
+  color: var(--hl-on-primary-container);
 }
 .claude-hl-search .item .text {
   font-weight: 500;
@@ -125,56 +354,65 @@
   border-radius: 2px;
 }
 .claude-hl-search .item .note {
-  color: #6b7280;
+  color: var(--hl-on-surface-variant);
   font-size: 12px;
   margin-top: 4px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  border-left: 2px solid #f59e0b;
-  padding-left: 6px;
 }
 .claude-hl-search .empty {
-  padding: 24px;
+  padding: 28px;
   text-align: center;
-  color: #9ca3af;
+  color: var(--hl-on-surface-variant);
   font-size: 13px;
 }
 .claude-hl-search .hint {
-  border-top: 1px solid #e5e7eb;
-  padding: 6px 12px;
+  border-top: 1px solid var(--hl-outline-variant);
+  padding: 8px 14px;
   font-size: 11px;
-  color: #9ca3af;
+  color: var(--hl-on-surface-variant);
   text-align: right;
 }
 
-/* Floating action toolbar shown on selection */
+/* --- Selection toolbar ---------------------------------------------------- */
+/* Deliberately dark in both themes: a floating contextual menu reads cleanly
+   over any host page (light or dark) as a single elevated dark pill. */
 .claude-hl-toolbar {
   position: absolute;
   z-index: 2147483647;
-  background: #1f2937;
-  color: white;
-  border-radius: 8px;
-  padding: 4px;
+  background: #2b2620;
+  color: #fff;
+  border-radius: 999px;
+  padding: 4px 6px;
   display: flex;
+  align-items: center;
   gap: 2px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.28),
+    0 10px 28px rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-family: "Roboto", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 13px;
   user-select: none;
 }
 .claude-hl-toolbar button {
   background: transparent;
-  color: white;
+  color: #fff;
   border: none;
-  padding: 6px 10px;
-  border-radius: 4px;
+  padding: 6px 12px;
+  border-radius: 999px;
   cursor: pointer;
   font-size: 13px;
   font-weight: 500;
+  transition: background 0.12s ease;
 }
 .claude-hl-toolbar button:hover {
-  background: #374151;
+  background: rgba(255, 255, 255, 0.14);
+}
+.claude-hl-toolbar button:focus-visible {
+  outline: 2px solid #ffb95c;
+  outline-offset: 1px;
 }
 .claude-hl-toolbar .swatch {
   display: inline-block;
@@ -182,43 +420,51 @@
   height: 18px;
   border-radius: 50%;
   border: 2px solid transparent;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18);
   padding: 0;
   margin: 4px 2px;
   cursor: pointer;
+  transition: transform 0.12s ease, border-color 0.12s ease;
 }
 .claude-hl-toolbar .swatch:hover {
-  border-color: white;
+  border-color: #fff;
+  transform: scale(1.12);
+}
+.claude-hl-toolbar .swatch:focus-visible {
+  outline: 2px solid #ffb95c;
+  outline-offset: 2px;
 }
 .claude-hl-toolbar .sep {
   width: 1px;
-  background: #4b5563;
-  margin: 4px 2px;
+  align-self: stretch;
+  background: rgba(255, 255, 255, 0.16);
+  margin: 4px 4px;
 }
 
-/* Note popup — minimal */
+/* --- Note popup ----------------------------------------------------------- */
 .claude-hl-note {
   position: absolute;
   z-index: 2147483647;
-  background: #ffffff;
-  color: #111827;
+  background: var(--hl-surface);
+  color: var(--hl-on-surface);
   width: 320px;
-  border-radius: 14px;
-  padding: 16px;
+  border-radius: var(--hl-radius-lg);
+  padding: 18px;
   box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.04),
-    0 12px 36px rgba(0, 0, 0, 0.12);
-  border: 1px solid rgba(0, 0, 0, 0.04);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    0 2px 6px var(--hl-shadow),
+    0 16px 44px var(--hl-shadow);
+  border: 1px solid var(--hl-outline-variant);
   font-size: 13px;
   line-height: 1.45;
 }
 .claude-hl-note .quote {
-  color: #9ca3af;
+  color: var(--hl-on-surface-variant);
   font-size: 12px;
   margin: 0 0 14px;
-  background: transparent;
+  padding: 8px 12px;
+  background: var(--hl-surface-container);
+  border-radius: var(--hl-radius-sm);
   border: none;
-  padding: 0;
   font-style: normal;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -232,23 +478,23 @@
   width: 100%;
   min-height: 76px;
   resize: vertical;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
+  border: 1px solid var(--hl-outline);
+  border-radius: var(--hl-radius-sm);
   padding: 10px 12px;
   font: inherit;
   font-size: 13px;
   box-sizing: border-box;
-  color: #111827;
-  background: #ffffff;
+  color: var(--hl-on-surface);
+  background: var(--hl-surface);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 .claude-hl-note textarea::placeholder {
-  color: #9ca3af;
+  color: var(--hl-on-surface-variant);
 }
 .claude-hl-note textarea:focus {
   outline: none;
-  border-color: #111827;
-  box-shadow: 0 0 0 3px rgba(17, 24, 39, 0.06);
+  border-color: var(--hl-primary);
+  box-shadow: 0 0 0 3px var(--hl-state);
 }
 
 .claude-hl-note .color-row,
@@ -256,16 +502,13 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 8px;
-}
-.claude-hl-note .brightness-row {
-  margin-bottom: 14px;
+  margin-top: 12px;
 }
 .claude-hl-note .color-row .label,
 .claude-hl-note .brightness-row .label {
   font-size: 10px;
   font-weight: 500;
-  color: #9ca3af;
+  color: var(--hl-on-surface-variant);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   width: 60px;
@@ -284,14 +527,14 @@
   padding: 0;
   cursor: pointer;
   background-color: transparent;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+  box-shadow: inset 0 0 0 1px var(--hl-outline-variant);
   transition: transform 0.12s ease;
 }
 .claude-hl-note .color-row .swatch:hover {
   transform: scale(1.15);
 }
 .claude-hl-note .color-row .swatch.active {
-  border-color: #111827;
+  border-color: var(--hl-on-surface);
 }
 .claude-hl-note .color-row .swatch.custom {
   position: relative;
@@ -318,17 +561,68 @@
   padding: 0;
   cursor: pointer;
 }
+.claude-hl-note .brightness-row {
+  margin-bottom: 4px;
+}
+/* Custom range slider: a rounded track that fades to the accent, with an
+   elevated ring thumb. Track fill is driven by --fill (0-100), set inline from
+   the slider value in content.js so the filled portion tracks the handle. */
 .claude-hl-note .brightness-row input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
   flex: 1;
-  accent-color: #111827;
-  height: 4px;
+  height: 6px;
+  border-radius: var(--hl-radius-full);
   cursor: pointer;
+  background: linear-gradient(
+    to right,
+    var(--hl-primary) 0%,
+    var(--hl-primary) var(--fill, 70%),
+    var(--hl-outline-variant) var(--fill, 70%),
+    var(--hl-outline-variant) 100%
+  );
+  outline: none;
+}
+.claude-hl-note .brightness-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--hl-surface);
+  border: 2px solid var(--hl-primary);
+  box-shadow: 0 1px 3px var(--hl-shadow);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.claude-hl-note .brightness-row input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+.claude-hl-note .brightness-row input[type="range"]:active::-webkit-slider-thumb {
+  transform: scale(1.15);
+  box-shadow: 0 0 0 6px var(--hl-state);
+}
+.claude-hl-note .brightness-row input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--hl-surface);
+  border: 2px solid var(--hl-primary);
+  box-shadow: 0 1px 3px var(--hl-shadow);
+}
+.claude-hl-note .brightness-row input[type="range"]::-moz-range-track {
+  height: 6px;
+  border-radius: var(--hl-radius-full);
+  background: transparent;
 }
 .claude-hl-note .brightness-row .brightness-value {
   font-size: 11px;
-  color: #9ca3af;
-  min-width: 36px;
-  text-align: right;
+  font-weight: 600;
+  color: var(--hl-on-surface-variant);
+  background: var(--hl-surface-container);
+  border-radius: var(--hl-radius-full);
+  padding: 3px 8px;
+  min-width: 44px;
+  text-align: center;
   font-variant-numeric: tabular-nums;
 }
 
@@ -336,7 +630,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-top: 12px;
+  margin-top: 16px;
   gap: 6px;
 }
 .claude-hl-note .actions .right {
@@ -345,36 +639,45 @@
 }
 .claude-hl-note button {
   border: none;
-  border-radius: 8px;
-  padding: 7px 14px;
+  border-radius: var(--hl-radius-full);
+  padding: 8px 16px;
   font-size: 13px;
   cursor: pointer;
   font-weight: 500;
   font-family: inherit;
-  transition: background-color 0.15s ease, color 0.15s ease;
+  transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
 }
 .claude-hl-note .save {
-  background: #111827;
-  color: #ffffff;
+  background: var(--hl-primary);
+  color: var(--hl-on-primary);
 }
 .claude-hl-note .save:hover {
-  background: #000000;
+  box-shadow: 0 1px 3px 1px var(--hl-shadow);
 }
 .claude-hl-note .cancel {
   background: transparent;
-  color: #6b7280;
+  color: var(--hl-on-surface-variant);
 }
 .claude-hl-note .cancel:hover {
-  background: #f3f4f6;
-  color: #111827;
+  background: var(--hl-state);
+  color: var(--hl-on-surface);
 }
 .claude-hl-note .delete {
   background: transparent;
-  color: #9ca3af;
+  color: var(--hl-on-surface-variant);
   font-size: 12px;
-  padding: 6px 10px;
+  padding: 7px 12px;
 }
 .claude-hl-note .delete:hover {
-  background: #fef2f2;
-  color: #ef4444;
+  background: color-mix(in srgb, var(--hl-error) 12%, transparent);
+  color: var(--hl-error);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .claude-hl-note *,
+  .claude-hl-search *,
+  .claude-hl-toolbar *,
+  .claude-hl-marker {
+    transition: none !important;
+  }
 }

@@ -7,22 +7,56 @@
   </head>
   <body>
     <div class="header">
-      <h1>Claude Highlights</h1>
-      <input id="search" placeholder="Search highlights or notes…" />
-    </div>
-
-    <div id="siteSection" class="site-section">
-      <div class="site-info">
-        <div class="site-host" id="siteHost">—</div>
-        <div class="site-status" id="siteStatus">Activating…</div>
+      <div class="app-bar">
+        <span class="app-logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M4 4h11l5 5v11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4zm10 1.5V9h3.5L14 5.5z" opacity=".25"/><path fill="currentColor" d="M6.8 13.4l7.3-7.3a1.6 1.6 0 0 1 2.3 2.3l-7.3 7.3-3 .7.7-3z"/></svg>
+        </span>
+        <h1>Claude Highlights</h1>
+      </div>
+      <div class="search-field">
+        <svg class="search-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
+        <input id="search" placeholder="Search highlights or notes…" />
       </div>
     </div>
 
-    <div id="list" class="list"></div>
-    <div class="footer">
-      <button id="exportBtn">Export JSON</button>
-      <button id="clearBtn" class="danger">Clear all</button>
+    <div class="scroll">
+      <div id="siteSection" class="site-section">
+        <span class="tile-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm-1-5h2v2h-2zm0-8h2v6h-2z" opacity=".9"/></svg>
+        </span>
+        <div class="site-info">
+          <div class="site-host" id="siteHost">—</div>
+          <div class="site-status" id="siteStatus">Activating…</div>
+        </div>
+      </div>
+
+      <div id="driveSection" class="drive-section">
+        <div class="drive-row">
+          <span class="tile-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M6 19a5 5 0 0 1-.6-9.96A6 6 0 0 1 17.4 8.5 4.5 4.5 0 0 1 17 19H6z"/></svg>
+          </span>
+          <div class="drive-info">
+            <div class="drive-title">Google Drive backup</div>
+            <div class="drive-status" id="driveStatus">Checking…</div>
+          </div>
+          <button id="driveConnectBtn" class="btn btn-filled">Connect</button>
+        </div>
+        <div class="drive-actions" id="driveActions" hidden>
+          <button id="driveBackupBtn" class="btn btn-tonal">Back up now</button>
+          <button id="driveRestoreBtn" class="btn btn-outlined">Restore</button>
+          <button id="driveDisconnectBtn" class="btn btn-text danger">Disconnect</button>
+        </div>
+      </div>
+
+      <div id="list" class="list"></div>
     </div>
+
+    <div class="footer">
+      <button id="exportBtn" class="btn btn-text">Export</button>
+      <button id="importBtn" class="btn btn-text">Import</button>
+      <button id="clearBtn" class="btn btn-text danger">Clear all</button>
+    </div>
+    <input id="importFile" type="file" accept="application/json,.json" hidden />
     <script src="popup.js"></script>
   </body>
 </html>
