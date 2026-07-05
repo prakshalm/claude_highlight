@@ -799,7 +799,12 @@
 
     const noteBtn = document.createElement("button");
     noteBtn.textContent = "Add note";
-    noteBtn.addEventListener("click", () => createHighlight(COLORS[0], true));
+    noteBtn.addEventListener("click", (e) => {
+      // Stop this click from bubbling to the document listener, which would
+      // otherwise immediately close the note popup we're about to open.
+      e.stopPropagation();
+      createHighlight(COLORS[0], true);
+    });
     tb.appendChild(noteBtn);
 
     document.body.appendChild(tb);
@@ -1046,11 +1051,6 @@
     const wrap = document.createElement("div");
     wrap.className = "claude-hl-note";
     wrap.addEventListener("mousedown", (e) => e.stopPropagation());
-
-    const quote = document.createElement("div");
-    quote.className = "quote";
-    quote.textContent = highlight.text.length > 220 ? highlight.text.slice(0, 220) + "…" : highlight.text;
-    wrap.appendChild(quote);
 
     // Helper that builds a labeled row of color swatches + a custom-picker swatch.
     const buildColorRow = (labelText, palette, currentValue, onPick, swatchBg, customToColor) => {
