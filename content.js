@@ -807,6 +807,19 @@
     });
     tb.appendChild(noteBtn);
 
+    const chatBtn = document.createElement("button");
+    chatBtn.className = "chat-btn";
+    chatBtn.textContent = "Ask " + detectChatPlatform().name;
+    chatBtn.title = "Open a fresh chat about this selection";
+    chatBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      // Capture the selection before hideToolbar() clears currentRange.
+      const text = currentRange ? currentRange.toString().trim() : "";
+      hideToolbar();
+      openChatPopup(text);
+    });
+    tb.appendChild(chatBtn);
+
     document.body.appendChild(tb);
     
     // Position toolbar below the selection
@@ -1043,6 +1056,216 @@
     }
     wrap.style.top = top + "px";
     wrap.style.left = left + "px";
+  }
+
+  // --- Chat-with-platform ----------------------------------------------------
+  // Detect which AI platform the current page is so "Ask <platform>" opens a
+  // fresh chat on that same site. Because it's the same origin as the page, the
+  // user's login/cookies carry into the iframe automatically. Unrecognised
+  // hosts fall back to ChatGPT.
+  function detectChatPlatform() {
+    const h = location.hostname;
+    if (h.includes("claude.ai")) {
+      return {
+        name: "Claude",
+        newChat: (q) => "https://claude.ai/new" + (q ? "?q=" + encodeURIComponent(q) : ""),
+      };
+    }
+    if (h.includes("chatgpt.com") || h.includes("chat.openai.com")) {
+      return {
+        name: "ChatGPT",
+        newChat: (q) => "https://chatgpt.com/" + (q ? "?q=" + encodeURIComponent(q) : ""),
+      };
+    }
+    if (h.includes("gemini.google.com")) {
+      // Gemini has no reliable URL-prefill param; just open a fresh chat.
+      return { name: "Gemini", newChat: () => "https://gemini.google.com/app" };
+    }
+    if (h.includes("perplexity.ai")) {
+      return {
+        name: "Perplexity",
+        newChat: (q) =>
+          q ? "https://www.perplexity.ai/search?q=" + encodeURIComponent(q) : "https://www.perplexity.ai/",
+      };
+    }
+    // Unrecognised → default to ChatGPT.
+    return {
+      name: "ChatGPT",
+      newChat: (q) => "https://chatgpt.com/" + (q ? "?q=" + encodeURIComponent(q) : ""),
+    };
+  }
+
+  let chatEl = null;
+
+  function closeChatPopup() {
+    if (chatEl) {
+      chatEl.remove();
+      chatEl = null;
+      document.removeEventListener("keydown", onChatKeydown, true);
+    }
+  }
+
+  function onChatKeydown(e) {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      closeChatPopup();
+    }
+  }
+
+  // Position the chat panel in the top-right of the viewport (fixed), clamped so
+  // it never spills off-screen. Kept out of the way of the text being read.
+  function placeChatPopup(wrap) {
+    const w = wrap.offsetWidth || 400;
+    const h = wrap.offsetHeight || 560;
+    const left = Math.max(12, window.innerWidth - w - 24);
+    const top = Math.max(12, Math.min(72, window.innerHeight - h - 12));
+    wrap.style.left = left + "px";
+    wrap.style.top = top + "px";
+  }
+
+  function openChatPopup(selectedText) {
+    closeChatPopup();
+    const platform = detectChatPlatform();
+    const url = platform.newChat(selectedText);
+
+    const wrap = document.createElement("div");
+    wrap.className = "claude-hl-chat";
+    // Swallow mousedown so a click inside the panel chrome doesn't clear the
+    // page's text selection or trip other listeners.
+    wrap.addEventListener("mousedown", (e) => e.stopPropagation());
+
+    // Header: title + open-in-window + close.
+    const header = document.createElement("div");
+    header.className = "chat-header";
+
+    const title = document.createElement("span");
+    title.className = "chat-title";
+    title.textContent = "Ask " + platform.name;
+    header.appendChild(title);
+
+    const openWin = document.createElement("button");
+    openWin.className = "chat-openwin";
+    openWin.title = "Open in a separate window";
+    openWin.setAttribute("aria-label", "Open in a separate window");
+    openWin.textContent = "⧉";
+    openWin.addEventListener("click", () => {
+      window.open(url, "_blank", "noopener,width=480,height=720");
+    });
+    header.appendChild(openWin);
+
+    const close = document.createElement("button");
+    close.className = "chat-close";
+    close.title = "Close";
+    close.setAttribute("aria-label", "Close chat");
+    close.textContent = "✕";
+    close.addEventListener("click", closeChatPopup);
+    header.appendChild(close);
+
+    wrap.appendChild(header);
+
+    // Body: the embedded chat.
+    const body = document.createElement("div");
+    body.className = "chat-body";
+    const frame = document.createElement("iframe");
+    frame.className = "chat-frame";
+    frame.src = url;
+    frame.setAttribute("allow", "clipboard-read; clipboard-write; microphone");
+    body.appendChild(frame);
+    wrap.appendChild(body);
+
+    // Footer: an always-available escape hatch in case the site still refuses to
+    // frame (e.g. header-stripping unsupported on this browser).
+    const footer = document.createElement("div");
+    footer.className = "chat-footer";
+    const hint = document.createElement("span");
+    hint.textContent = "Not loading?";
+    const openLink = document.createElement("button");
+    openLink.className = "chat-openlink";
+    openLink.textContent = "Open in a new window";
+    openLink.addEventListener("click", () => {
+      window.open(url, "_blank", "noopener,width=480,height=720");
+    });
+    footer.appendChild(hint);
+    footer.appendChild(openLink);
+    wrap.appendChild(footer);
+
+    // Resize grip (bottom-right corner).
+    const grip = document.createElement("div");
+    grip.className = "chat-resize";
+    grip.title = "Drag to resize";
+    wrap.appendChild(grip);
+
+    // While dragging/resizing, the iframe would swallow mousemove events, so we
+    // disable its pointer events for the duration of the gesture.
+    const beginGesture = () => {
+      frame.style.pointerEvents = "none";
+      document.body.style.userSelect = "none";
+    };
+    const endGesture = () => {
+      frame.style.pointerEvents = "";
+      document.body.style.userSelect = "";
+    };
+
+    // --- Drag the panel by its header ---
+    let dragState = null;
+    const onDragMove = (e) => {
+      if (!dragState) return;
+      const w = wrap.offsetWidth;
+      const h = wrap.offsetHeight;
+      let left = e.clientX - dragState.dx;
+      let top = e.clientY - dragState.dy;
+      left = Math.max(4, Math.min(left, window.innerWidth - w - 4));
+      top = Math.max(4, Math.min(top, window.innerHeight - h - 4));
+      wrap.style.left = left + "px";
+      wrap.style.top = top + "px";
+    };
+    const onDragEnd = () => {
+      dragState = null;
+      endGesture();
+      document.removeEventListener("mousemove", onDragMove, true);
+      document.removeEventListener("mouseup", onDragEnd, true);
+    };
+    header.addEventListener("mousedown", (e) => {
+      if (e.target.closest("button")) return; // let header controls click normally
+      e.preventDefault();
+      const rect = wrap.getBoundingClientRect();
+      dragState = { dx: e.clientX - rect.left, dy: e.clientY - rect.top };
+      beginGesture();
+      document.addEventListener("mousemove", onDragMove, true);
+      document.addEventListener("mouseup", onDragEnd, true);
+    });
+
+    // --- Resize from the corner grip ---
+    let resizeState = null;
+    const onResizeMove = (e) => {
+      if (!resizeState) return;
+      let w = resizeState.w + (e.clientX - resizeState.x);
+      let h = resizeState.h + (e.clientY - resizeState.y);
+      w = Math.max(300, Math.min(w, window.innerWidth - 20));
+      h = Math.max(320, Math.min(h, window.innerHeight - 20));
+      wrap.style.width = w + "px";
+      wrap.style.height = h + "px";
+    };
+    const onResizeEnd = () => {
+      resizeState = null;
+      endGesture();
+      document.removeEventListener("mousemove", onResizeMove, true);
+      document.removeEventListener("mouseup", onResizeEnd, true);
+    };
+    grip.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const rect = wrap.getBoundingClientRect();
+      resizeState = { x: e.clientX, y: e.clientY, w: rect.width, h: rect.height };
+      beginGesture();
+      document.addEventListener("mousemove", onResizeMove, true);
+      document.addEventListener("mouseup", onResizeEnd, true);
+    });
+
+    document.body.appendChild(wrap);
+    placeChatPopup(wrap);
+    chatEl = wrap;
+    document.addEventListener("keydown", onChatKeydown, true);
   }
 
   async function openNotePopup(highlight, anchorEl, mode = "highlight") {

@@ -9,13 +9,18 @@
       "strict_min_version": "121.0"
     }
   },
-  "permissions": ["storage", "scripting", "tabs", "activeTab", "identity"],
+  "permissions": ["storage", "scripting", "tabs", "activeTab", "identity", "declarativeNetRequest"],
   "host_permissions": [
     "https://claude.ai/*",
     "https://chatgpt.com/*",
     "https://chat.openai.com/*",
     "https://www.googleapis.com/*"
   ],
+  "declarative_net_rules": {
+    "rule_resources": [
+      { "id": "frame_ruleset", "enabled": true, "path": "rules.json" }
+    ]
+  },
   "oauth2": {
     "client_id": "262834513856-c060vm4pbcg3ckci7kac1hmvbvelulq0.apps.googleusercontent.com",
     "scopes": ["https://www.googleapis.com/auth/drive.appdata"]
@@ -25,11 +30,7 @@
   },
   "content_scripts": [
     {
-      "matches": [
-        "https://claude.ai/*",
-        "https://chatgpt.com/*",
-        "https://chat.openai.com/*"
-      ],
+      "matches": ["http://*/*", "https://*/*"],
       "js": ["content.js"],
       "css": ["content.css"],
       "run_at": "document_idle"
