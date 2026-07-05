@@ -58,9 +58,16 @@ function hashData(obj) {
 // exactly chrome.identity.getRedirectURL() (see DRIVE_SETUP.md). Put that
 // client ID in manifest.json → oauth2.client_id.
 
+// OAuth client IDs aren't secret. We read it from the manifest's oauth2 key,
+// but keep a fallback because Firefox may drop that non-standard key from
+// getManifest(). The same Web-application client works for both browsers — only
+// the registered redirect URI differs (Chrome: *.chromiumapp.org, Firefox:
+// *.extensions.allizom.org), and both can be registered on the one client.
+const FALLBACK_CLIENT_ID = "262834513856-c060vm4pbcg3ckci7kac1hmvbvelulq0.apps.googleusercontent.com";
+
 function getClientId() {
   const oauth = chrome.runtime.getManifest().oauth2;
-  return (oauth && oauth.client_id) || "";
+  return (oauth && oauth.client_id) || FALLBACK_CLIENT_ID;
 }
 
 function isConfigured() {
@@ -122,6 +129,16 @@ async function getAuthToken(interactive) {
 function removeCachedToken(token) {
   if (!token || (cachedToken && cachedToken.token === token)) cachedToken = null;
   return Promise.resolve();
+}
+
+// Implicit-flow tokens can't be refreshed silently forever: once the Google
+// session in the auth webview lapses (or >1h passes with the worker evicted),
+// the prompt=none request comes back with one of these codes. It's not a real
+// failure — the user just needs to click Reconnect once to re-mint a token.
+const REAUTH_ERROR_CODES = ["interaction_required", "login_required", "consent_required", "account_selection_required"];
+function isReauthError(e) {
+  const m = String(e && e.message ? e.message : e).toLowerCase();
+  return REAUTH_ERROR_CODES.some((code) => m.includes(code));
 }
 
 // Fetch against a Drive endpoint, transparently refreshing a stale token once.
@@ -216,6 +233,7 @@ async function uploadBackup(interactive) {
     lastBackupAt: new Date().toISOString(),
     lastHash: hashData(data),
     lastError: null,
+    needsReauth: false,
   });
   return { fileId: newId };
 }
@@ -274,7 +292,13 @@ async function runAutoBackup() {
     if (hashData(data) === meta.lastHash) return; // nothing actually changed
     await uploadBackup(false);
   } catch (e) {
-    await setMeta({ lastError: String(e && e.message ? e.message : e) });
+    if (isReauthError(e)) {
+      // Silent re-auth lapsed — pause sync and ask for one reconnect click,
+      // rather than showing a cryptic OAuth code as a hard failure.
+      await setMeta({ needsReauth: true, lastError: null });
+    } else {
+      await setMeta({ lastError: String(e && e.message ? e.message : e) });
+    }
     console.warn("[Claude Highlighter] Auto-backup failed:", e);
   }
 }
@@ -303,7 +327,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           // Mark connected as soon as auth succeeds so the popup flips to the
           // connected UI even if the initial backup upload hiccups.
           const email = await fetchAccountEmail(false).catch(() => null);
-          await setMeta({ connected: true, email, lastError: null });
+          await setMeta({ connected: true, email, lastError: null, needsReauth: false });
           try {
             // Never clobber an existing Drive backup on connect. After a
             // reinstall local storage is empty, so seeding here would overwrite
@@ -344,7 +368,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           const { data, backedUpAt } = await downloadBackup(true);
           // Pre-set lastHash so the resulting storage.onChanged doesn't bounce
           // straight back up to Drive as a redundant upload.
-          await setMeta({ lastHash: hashData(data), lastRestoreAt: new Date().toISOString(), lastError: null });
+          await setMeta({ lastHash: hashData(data), lastRestoreAt: new Date().toISOString(), lastError: null, needsReauth: false });
           await chrome.storage.local.set({ [STORAGE_KEY]: data });
           sendResponse({ ok: true, backedUpAt, meta: await getMeta() });
           break;

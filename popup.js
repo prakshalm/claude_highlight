@@ -329,7 +329,7 @@ importFileEl.addEventListener("change", async () => {
   }
   const incoming = extractHighlights(parsed);
   if (!incoming) {
-    alert("That doesn't look like a Claude Highlights export.");
+    alert("That doesn't look like a LumiNote export.");
     return;
   }
   const count = Object.values(incoming).reduce((n, arr) => n + arr.length, 0);
@@ -414,7 +414,6 @@ function applyDriveState(res) {
   }
   const meta = res.meta || {};
   if (meta.connected) {
-    driveConnectBtn.hidden = true;
     driveActionsEl.hidden = false;
     if (meta.email) {
       driveAccountEl.textContent = "Linked to " + meta.email;
@@ -422,16 +421,28 @@ function applyDriveState(res) {
     } else {
       driveAccountEl.hidden = true;
     }
-    if (meta.lastError) {
-      setDriveStatus("Last sync failed: " + meta.lastError, "error");
-    } else if (meta.lastBackupAt) {
-      setDriveStatus("Backed up " + relativeTime(meta.lastBackupAt), "ok");
+    if (meta.needsReauth) {
+      // Silent token refresh lapsed — one click resumes sync. Keep the account
+      // linked and offer Reconnect alongside the usual actions.
+      driveConnectBtn.hidden = false;
+      driveConnectBtn.disabled = false;
+      driveConnectBtn.textContent = "Reconnect";
+      setDriveStatus("Sync paused — reconnect to resume auto-backup", "error");
     } else {
-      setDriveStatus("Connected", "ok");
+      driveConnectBtn.hidden = true;
+      driveConnectBtn.textContent = "Connect";
+      if (meta.lastError) {
+        setDriveStatus("Last sync failed: " + meta.lastError, "error");
+      } else if (meta.lastBackupAt) {
+        setDriveStatus("Backed up " + relativeTime(meta.lastBackupAt), "ok");
+      } else {
+        setDriveStatus("Connected", "ok");
+      }
     }
   } else {
     driveConnectBtn.hidden = false;
     driveConnectBtn.disabled = false;
+    driveConnectBtn.textContent = "Connect";
     driveActionsEl.hidden = true;
     driveAccountEl.hidden = true;
     setDriveStatus("Not connected — auto-backs up your highlights & notes");
