@@ -27,6 +27,39 @@
   ];
   const DEFAULT_TEXT_COLOR = "#000000";
 
+  // Hold-and-drag instant highlight: hold this modifier key while dragging to
+  // select, then release the mouse to highlight in the last-used color without
+  // showing the toolbar. Change this string to remap the modifier (a settings
+  // page will control this eventually). Must be an event property name:
+  // "altKey", "ctrlKey", "shiftKey", or "metaKey".
+  const INSTANT_HIGHLIGHT_KEY = "altKey";
+
+  // Last-used highlight color (persisted via chrome.storage.local).
+  const LAST_COLOR_KEY = "claude_hl_last_color";
+  let lastUsedColor = COLORS[0];
+  // Load persisted last-used color on startup.
+  try {
+    chrome.storage.local.get([LAST_COLOR_KEY], (res) => {
+      if (!chrome.runtime.lastError && res[LAST_COLOR_KEY]) {
+        lastUsedColor = res[LAST_COLOR_KEY];
+      }
+    });
+  } catch (_) {}
+
+  // --- Hold-and-drag modifier tracking ----------------------------------------
+  // We track the modifier's physical state so the mouseup handler can decide
+  // whether a completed selection was an "instant highlight" gesture.
+  let _instantHlModifierHeld = false;
+
+  document.addEventListener("keydown", (e) => {
+    if (e[INSTANT_HIGHLIGHT_KEY]) _instantHlModifierHeld = true;
+  }, true);
+  document.addEventListener("keyup", (e) => {
+    if (!e[INSTANT_HIGHLIGHT_KEY]) _instantHlModifierHeld = false;
+  }, true);
+  // Reset when the window loses focus so we don't get stuck in a "held" state.
+  window.addEventListener("blur", () => { _instantHlModifierHeld = false; });
+
   // --- Utilities --------------------------------------------------------------
 
   // Derive a stable storage key for the current page.
@@ -868,6 +901,10 @@
   }
 
   document.addEventListener("mouseup", () => {
+    // Snapshot modifier state NOW (before the setTimeout); by the time the
+    // timeout fires the physical key may already have been released.
+    const wasModifierHeld = _instantHlModifierHeld;
+
     setTimeout(() => {
       const sel = window.getSelection();
       if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
@@ -900,6 +937,16 @@
       ) {
         return;
       }
+
+      // --- Hold-and-drag instant highlight ---
+      // If the modifier was held when the mouse was released, create an
+      // instant highlight in the last-used color and suppress the toolbar.
+      if (wasModifierHeld && !isStreaming()) {
+        currentRange = range.cloneRange();
+        createHighlight(lastUsedColor, false);
+        return;
+      }
+
       showToolbar(range);
     }, 50);
   });
@@ -968,6 +1015,10 @@
 
     wrapRange(currentRange, id, color, hl.textColor);
     saveHighlight(convId, hl);
+
+    // Remember this color for the instant-highlight hotkey.
+    lastUsedColor = color;
+    try { chrome.storage.local.set({ [LAST_COLOR_KEY]: color }); } catch (_) {}
 
     // Clear selection and toolbar.
     window.getSelection().removeAllRanges();
@@ -1663,12 +1714,16 @@
   document.addEventListener(
     "keydown",
     (e) => {
-      if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyH") {
+      // Alt+H (without Shift) toggles the highlight search panel.
+      if (e.altKey && !e.shiftKey && !e.ctrlKey && !e.metaKey && e.code === "KeyH") {
         e.preventDefault();
         e.stopPropagation();
         if (searchPanelEl) closeSearchPanel();
         else openSearchPanel();
-      } else if (e.key === "Escape" && searchPanelEl) {
+        return;
+      }
+
+      if (e.key === "Escape" && searchPanelEl) {
         e.preventDefault();
         closeSearchPanel();
       }
