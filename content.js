@@ -9,6 +9,7 @@
   window.__claudeHighlighterLoaded = true;
 
   const STORAGE_KEY = "claude_highlights_v1";
+  const SCHEMA_VERSION = 2;
   const COLORS = [
     "rgba(255, 235, 59, 1)",    // yellow
     "rgba(34, 197, 94, 1)",     // green
@@ -254,8 +255,56 @@
     console.info("[Claude Highlighter] Extension context invalidated — disabling. Refresh the page after reloading the extension.");
   }
 
+  // --- Schema migration -------------------------------------------------------
+  // One-time, idempotent upgrade that adds new fields to every saved highlight.
+  // Keyed by _schemaVersion on the top-level data object so it runs at most once
+  // per storage state. Safe to re-run: only sets fields that are missing.
+  let _migrationDone = false;
+  async function migrateStorage() {
+    if (_migrationDone) return;
+    _migrationDone = true;
+    if (!isContextValid()) return;
+    let data;
+    try {
+      data = await new Promise((resolve) => {
+        chrome.storage.local.get([STORAGE_KEY], (res) => {
+          if (chrome.runtime.lastError) return resolve(null);
+          resolve(res[STORAGE_KEY] || null);
+        });
+      });
+    } catch (_) {
+      return;
+    }
+    if (!data || typeof data !== "object") return;
+    if (data._schemaVersion >= SCHEMA_VERSION) return; // already current
+    let changed = false;
+    for (const [key, arr] of Object.entries(data)) {
+      if (key.startsWith("_")) continue; // skip meta keys
+      if (!Array.isArray(arr)) continue;
+      for (const hl of arr) {
+        if (hl.style === undefined)        { hl.style = "background"; changed = true; }
+        if (hl.tags === undefined)         { hl.tags = [];            changed = true; }
+        if (hl.starred === undefined)      { hl.starred = false;      changed = true; }
+        if (hl.collectionId === undefined) { hl.collectionId = null;   changed = true; }
+      }
+    }
+    data._schemaVersion = SCHEMA_VERSION;
+    changed = true; // always persist the version stamp
+    if (changed) {
+      try {
+        await new Promise((resolve) => {
+          chrome.storage.local.set({ [STORAGE_KEY]: data }, () => {
+            if (chrome.runtime.lastError) { /* best-effort */ }
+            resolve();
+          });
+        });
+      } catch (_) { /* best-effort */ }
+    }
+  }
+
   async function loadAll() {
     if (!isContextValid()) return {};
+    await migrateStorage();
     return new Promise((resolve) => {
       try {
         chrome.storage.local.get([STORAGE_KEY], (res) => {
@@ -1011,6 +1060,10 @@
       url: location.href,
       host: location.hostname,
       title: document.title || "",
+      style: "background",
+      tags: [],
+      starred: false,
+      collectionId: null,
     };
 
     wrapRange(currentRange, id, color, hl.textColor);

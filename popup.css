@@ -508,3 +508,64 @@ body {
 .footer .btn {
   flex: 1;
 }
+
+/* The Send-to-chat button gets priority width when it has a count badge. */
+.footer #sendChatBtn {
+  flex: 0 0 auto;
+}
+
+/* --- Highlight multi-select checkboxes ------------------------------------ */
+
+.item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.hl-check-label {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding-top: 2px;
+  cursor: pointer;
+}
+.hl-check {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--primary);
+}
+.item-content {
+  flex: 1;
+  min-width: 0;
+}
+/* Subtle tint on checked items so the user can see what they picked. */
+.item:has(.hl-check:checked) {
+  background: var(--primary-container);
+  border-color: var(--primary);
+}
+
+/* --- Toast notification --------------------------------------------------- */
+
+.luminote-toast {
+  position: fixed;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: var(--on-surface);
+  color: var(--surface);
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 8px 20px;
+  border-radius: var(--radius-full);
+  box-shadow: 0 4px 12px var(--shadow);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  z-index: 9999;
+  white-space: nowrap;
+}
+.luminote-toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}

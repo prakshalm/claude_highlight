@@ -1,4 +1,5 @@
 const STORAGE_KEY = "claude_highlights_v1";
+const SCHEMA_VERSION = 2;
 const DEFAULT_ORIGINS = [
   "https://claude.ai",
   "https://chatgpt.com",
@@ -8,6 +9,7 @@ const DEFAULT_ORIGINS = [
 const listEl = document.getElementById("list");
 const searchEl = document.getElementById("search");
 const exportBtn = document.getElementById("exportBtn");
+const sendChatBtn = document.getElementById("sendChatBtn");
 const clearBtn = document.getElementById("clearBtn");
 const siteHostEl = document.getElementById("siteHost");
 const siteStatusEl = document.getElementById("siteStatus");
@@ -31,6 +33,35 @@ function saveAll(data) {
   });
 }
 
+// --- Schema migration -------------------------------------------------------
+// Mirrors the content-script migration. Whichever context loads first performs
+// the one-time upgrade; the _schemaVersion marker makes it a no-op afterward.
+let _migrationDone = false;
+async function migrateStorage() {
+  if (_migrationDone) return;
+  _migrationDone = true;
+  let data;
+  try {
+    data = await loadAll();
+  } catch (_) {
+    return;
+  }
+  if (!data || typeof data !== "object") return;
+  if (data._schemaVersion >= SCHEMA_VERSION) return;
+  for (const [key, arr] of Object.entries(data)) {
+    if (key.startsWith("_")) continue;
+    if (!Array.isArray(arr)) continue;
+    for (const hl of arr) {
+      if (hl.style === undefined)        hl.style = "background";
+      if (hl.tags === undefined)         hl.tags = [];
+      if (hl.starred === undefined)      hl.starred = false;
+      if (hl.collectionId === undefined) hl.collectionId = null;
+    }
+  }
+  data._schemaVersion = SCHEMA_VERSION;
+  await saveAll(data);
+}
+
 function escapeHtml(str) {
   return str.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
@@ -42,6 +73,74 @@ function formatDate(iso) {
   } catch {
     return "";
   }
+}
+
+// --- Shared formatter for "send to chat" and future export -------------------
+// Assembles an array of {highlight, sourceUrl} objects into a single Markdown
+// text block grouped by conversation, with blockquotes, labeled notes, and one
+// source link per group.
+function formatHighlightsForChat(items) {
+  // Group items by sourceUrl (same conversation → same URL).
+  const groups = [];
+  const keyIndex = new Map();
+  for (const item of items) {
+    const key = item.sourceUrl || "";
+    if (keyIndex.has(key)) {
+      groups[keyIndex.get(key)].push(item);
+    } else {
+      keyIndex.set(key, groups.length);
+      groups.push([item]);
+    }
+  }
+
+  const sections = [
+    "Here are notes I highlighted in earlier chats — please use them as context.",
+  ];
+
+  for (const groupItems of groups) {
+    const first = groupItems[0].highlight;
+    const url = groupItems[0].sourceUrl || "";
+
+    // Derive a conversation title from the stored page title (document.title at
+    // creation time). Fall back to the first ~6 words of the first highlight, or
+    // the URL itself.
+    let title = (first.title || "").trim();
+    if (!title) {
+      const words = first.text.split(/\s+/);
+      title = words.slice(0, 6).join(" ") + (words.length > 6 ? "…" : "");
+    }
+
+    let section = "## " + title;
+    if (url) section += "\n🔗 " + url;
+
+    for (const { highlight: h } of groupItems) {
+      section += "\n\n> " + h.text.replace(/\n/g, "\n> ");
+      if (h.note && h.note.trim()) {
+        section += "\n\nNote: " + h.note;
+      }
+    }
+
+    sections.push(section);
+  }
+
+  return sections.join("\n\n");
+}
+
+// --- Toast notifications -----------------------------------------------------
+function showToast(message, durationMs = 2500) {
+  const existing = document.querySelector(".luminote-toast");
+  if (existing) existing.remove();
+  const el = document.createElement("div");
+  el.className = "luminote-toast";
+  el.textContent = message;
+  document.body.appendChild(el);
+  // Force reflow then add .show for the entrance animation.
+  el.offsetHeight; // eslint-disable-line no-unused-expressions
+  el.classList.add("show");
+  setTimeout(() => {
+    el.classList.remove("show");
+    setTimeout(() => el.remove(), 300);
+  }, durationMs);
 }
 
 // --- Site-control panel ----------------------------------------------------
@@ -102,6 +201,31 @@ async function activateOnCurrentTab() {
 
 // --- Highlights list -------------------------------------------------------
 
+// Strip a trailing " - <siteName>" suffix from a page title so it doesn't
+// duplicate the host label already shown in the header row.
+function stripSiteSuffix(title, hostLabel) {
+  if (!title || !hostLabel) return title;
+  const suffix = " - " + hostLabel;
+  if (title.length > suffix.length && title.toLowerCase().endsWith(suffix.toLowerCase())) {
+    return title.slice(0, -suffix.length);
+  }
+  return title;
+}
+
+// Build a readable label from the highlight's stored page title, falling back
+// to the first ~6 words of highlighted text, then the short conversation id.
+function deriveLabel(sampleHighlight, hostLabel, idFallback) {
+  const raw = sampleHighlight && sampleHighlight.title;
+  const stripped = raw ? stripSiteSuffix(raw.trim(), hostLabel) : "";
+  if (stripped) return stripped;
+  const text = (sampleHighlight && sampleHighlight.text) || "";
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length) {
+    return words.slice(0, 6).join(" ") + (words.length > 6 ? "…" : "");
+  }
+  return idFallback;
+}
+
 // Derive display info for a storage key.
 //   "<uuid>"           -> Claude chat
 //   "chatgpt:<uuid>"   -> ChatGPT chat
@@ -110,7 +234,7 @@ function describeKey(key, sampleHighlight) {
   if (key.startsWith("chatgpt:")) {
     const id = key.slice("chatgpt:".length);
     const url = sampleHighlight && sampleHighlight.url ? sampleHighlight.url : `https://chatgpt.com/c/${id}`;
-    return { hostLabel: "ChatGPT", label: `Chat ${id.slice(0, 8)}…`, url };
+    return { hostLabel: "ChatGPT", label: deriveLabel(sampleHighlight, "ChatGPT", `Chat ${id.slice(0, 8)}…`), url };
   }
   if (key.startsWith("url:")) {
     const url = sampleHighlight && sampleHighlight.url ? sampleHighlight.url : key.slice("url:".length);
@@ -118,12 +242,11 @@ function describeKey(key, sampleHighlight) {
     try {
       hostLabel = new URL(url).hostname;
     } catch {}
-    const title = sampleHighlight && sampleHighlight.title;
-    return { hostLabel, label: title || url.replace(/^https?:\/\//, ""), url };
+    return { hostLabel, label: deriveLabel(sampleHighlight, hostLabel, url.replace(/^https?:\/\//, "")), url };
   }
   // Legacy / Claude: bare conversation UUID.
   const url = sampleHighlight && sampleHighlight.url ? sampleHighlight.url : `https://claude.ai/chat/${key}`;
-  return { hostLabel: "Claude", label: `Chat ${key.slice(0, 8)}…`, url };
+  return { hostLabel: "Claude", label: deriveLabel(sampleHighlight, "Claude", `Chat ${key.slice(0, 8)}…`), url };
 }
 
 function jumpToHighlight(targetUrl, highlightId) {
@@ -178,7 +301,7 @@ async function renderList() {
   const q = (searchEl.value || "").toLowerCase().trim();
   listEl.innerHTML = "";
 
-  const keys = Object.keys(all);
+  const keys = Object.keys(all).filter((k) => !k.startsWith("_"));
   if (keys.length === 0) {
     listEl.innerHTML = '<div class="empty">No highlights yet. Select some text in a Claude / ChatGPT reply (or any enabled site) to create one.</div>';
     return;
@@ -244,14 +367,21 @@ async function renderList() {
       const item = document.createElement("div");
       item.className = "item";
       item.innerHTML = `
-        <div><span class="swatch" style="background:${h.color || "#fff59d"}"></span><span class="text">${escapeHtml(h.text)}</span></div>
-        ${h.note ? `<div class="note">${escapeHtml(h.note)}</div>` : ""}
-        <div class="meta"><span>${formatDate(h.createdAt)}</span><button class="del" data-id="${h.id}" data-key="${escapeHtml(key)}">Delete</button></div>
+        <label class="hl-check-label"><input type="checkbox" class="hl-check" data-hl-id="${h.id}" data-hl-key="${escapeHtml(key)}"></label>
+        <div class="item-content">
+          <div><span class="swatch" style="background:${h.color || "#fff59d"}"></span><span class="text">${escapeHtml(h.text)}</span></div>
+          ${h.note ? `<div class="note">${escapeHtml(h.note)}</div>` : ""}
+          <div class="meta"><span>${formatDate(h.createdAt)}</span><button class="del" data-id="${h.id}" data-key="${escapeHtml(key)}">Delete</button></div>
+        </div>
       `;
-      item.addEventListener("click", (e) => {
+      // Click on the content area (not the checkbox) jumps to the highlight.
+      const content = item.querySelector(".item-content");
+      content.addEventListener("click", (e) => {
         if (e.target.classList.contains("del")) return;
         jumpToHighlight(h.url || info.url, h.id);
       });
+      // Checkbox change updates the Send button badge.
+      item.querySelector(".hl-check").addEventListener("change", updateSendChatBtn);
       body.appendChild(item);
     }
     convDiv.appendChild(body);
@@ -272,7 +402,74 @@ async function renderList() {
       }
     });
   });
+  // Re-renders clear all checkboxes, so reset the send button.
+  updateSendChatBtn();
 }
+
+// --- Send-to-chat selection tracking -----------------------------------------
+
+function getCheckedHighlightIds() {
+  return Array.from(listEl.querySelectorAll(".hl-check:checked"));
+}
+
+function updateSendChatBtn() {
+  const count = getCheckedHighlightIds().length;
+  if (count > 0) {
+    sendChatBtn.textContent = `Send to chat (${count})`;
+    sendChatBtn.disabled = false;
+  } else {
+    sendChatBtn.textContent = "Send to chat";
+    sendChatBtn.disabled = true;
+  }
+}
+
+sendChatBtn.addEventListener("click", async () => {
+  const checked = getCheckedHighlightIds();
+  if (!checked.length) {
+    showToast("Select some highlights first");
+    return;
+  }
+  // Warn on large selections.
+  if (checked.length > 20) {
+    if (!confirm(`You selected ${checked.length} highlights — this will produce a very long text block. Continue?`)) return;
+  }
+  // Load all data once and assemble the items.
+  const all = await loadAll();
+  const items = [];
+  for (const cb of checked) {
+    const key = cb.dataset.hlKey;
+    const id = cb.dataset.hlId;
+    const arr = all[key];
+    if (!Array.isArray(arr)) continue;
+    const h = arr.find((x) => x.id === id);
+    if (!h) continue;
+    const info = describeKey(key, h);
+    items.push({ highlight: h, sourceUrl: h.url || info.url });
+  }
+  if (!items.length) {
+    showToast("Couldn't find the selected highlights");
+    return;
+  }
+  const text = formatHighlightsForChat(items);
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast("Context copied — paste into any chat");
+  } catch (e) {
+    // Fallback: select a hidden textarea (older browsers / focus issues).
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.cssText = "position:fixed;left:-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+      showToast("Context copied — paste into any chat");
+    } catch (_) {
+      showToast("Copy failed — try again");
+    }
+  }
+});
 
 searchEl.addEventListener("input", renderList);
 
@@ -295,8 +492,9 @@ const importFileEl = document.getElementById("importFile");
 function extractHighlights(parsed) {
   const obj = parsed && parsed.data && typeof parsed.data === "object" ? parsed.data : parsed;
   if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
-  for (const v of Object.values(obj)) {
-    if (!Array.isArray(v)) return null; // every key must map to a highlights array
+  for (const [k, v] of Object.entries(obj)) {
+    if (k.startsWith("_")) continue; // skip meta keys (e.g. _schemaVersion)
+    if (!Array.isArray(v)) return null; // every conv key must map to a highlights array
   }
   return obj;
 }
@@ -307,6 +505,7 @@ function extractHighlights(parsed) {
 function mergeHighlights(existing, incoming) {
   const out = { ...existing };
   for (const [key, list] of Object.entries(incoming)) {
+    if (key.startsWith("_") || !Array.isArray(list)) continue; // skip meta keys
     const byId = new Map((out[key] || []).map((h) => [h.id, h]));
     for (const h of list) byId.set(h.id, h);
     out[key] = Array.from(byId.values());
@@ -332,7 +531,7 @@ importFileEl.addEventListener("change", async () => {
     alert("That doesn't look like a LumiNote export.");
     return;
   }
-  const count = Object.values(incoming).reduce((n, arr) => n + arr.length, 0);
+  const count = Object.values(incoming).reduce((n, arr) => n + (Array.isArray(arr) ? arr.length : 0), 0);
   if (!confirm(`Import ${count} highlight(s) from this file? They'll be merged into your existing highlights.`)) return;
   const merged = mergeHighlights(await loadAll(), incoming);
   await saveAll(merged);
@@ -491,6 +690,7 @@ driveDisconnectBtn.addEventListener("click", async () => {
 });
 
 async function initList() {
+  await migrateStorage();
   try {
     const tab = await getActiveTab();
     currentChatUrl = (tab && tab.url) || null;
