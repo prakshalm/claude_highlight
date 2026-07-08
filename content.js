@@ -8,6 +8,17 @@
   if (window.__claudeHighlighterLoaded) return;
   window.__claudeHighlighterLoaded = true;
 
+  // --- Domain guard: only run on supported AI chat platforms -----------------
+  const _supportedHosts = new Set([
+    "claude.ai",
+    "chatgpt.com",
+    "chat.openai.com",
+    "gemini.google.com",
+    "www.perplexity.ai",
+    "perplexity.ai",
+  ]);
+  if (!_supportedHosts.has(location.hostname)) return;
+
   const STORAGE_KEY = "claude_highlights_v1";
   const SCHEMA_VERSION = 2;
   const COLORS = [
@@ -1172,36 +1183,43 @@
     if (h.includes("claude.ai")) {
       return {
         name: "Claude",
+        prefills: true,
         newChat: (q) => "https://claude.ai/new" + (q ? "?q=" + encodeURIComponent(q) : ""),
       };
     }
     if (h.includes("chatgpt.com") || h.includes("chat.openai.com")) {
       return {
         name: "ChatGPT",
+        prefills: true,
         newChat: (q) => "https://chatgpt.com/" + (q ? "?q=" + encodeURIComponent(q) : ""),
       };
     }
     if (h.includes("gemini.google.com")) {
-      // Gemini has no reliable URL-prefill param; just open a fresh chat.
-      return { name: "Gemini", newChat: () => "https://gemini.google.com/app" };
+      // Gemini has no native URL-prefill param; text is copied to clipboard instead.
+      return { name: "Gemini", prefills: false, newChat: () => "https://gemini.google.com/app" };
     }
     if (h.includes("perplexity.ai")) {
+      // Perplexity's /search?q= auto-submits immediately — no prefill-only param
+      // exists. Open the home page and copy text to clipboard instead.
       return {
         name: "Perplexity",
-        newChat: (q) =>
-          q ? "https://www.perplexity.ai/search?q=" + encodeURIComponent(q) : "https://www.perplexity.ai/",
+        prefills: false,
+        newChat: () => "https://www.perplexity.ai/",
       };
     }
     // Unrecognised → default to ChatGPT.
     return {
       name: "ChatGPT",
+      prefills: true,
       newChat: (q) => "https://chatgpt.com/" + (q ? "?q=" + encodeURIComponent(q) : ""),
     };
   }
 
   let chatEl = null;
+  let _bannerDismissTimer = 0;
 
   function closeChatPopup() {
+    if (_bannerDismissTimer) { clearTimeout(_bannerDismissTimer); _bannerDismissTimer = 0; }
     if (chatEl) {
       chatEl.remove();
       chatEl = null;
@@ -1231,6 +1249,13 @@
     closeChatPopup();
     const platform = detectChatPlatform();
     const url = platform.newChat(selectedText);
+
+    // For platforms that don't support URL-based prefill (Gemini, Perplexity),
+    // copy the selected text to the clipboard so the user can paste it.
+    const needsClipboard = !platform.prefills && !!selectedText;
+    if (needsClipboard) {
+      try { navigator.clipboard.writeText(selectedText); } catch (_) {}
+    }
 
     const wrap = document.createElement("div");
     wrap.className = "claude-hl-chat";
@@ -1266,6 +1291,21 @@
     header.appendChild(close);
 
     wrap.appendChild(header);
+
+    // Clipboard banner: shown when the platform can't prefill via URL.
+    // Auto-dismisses after 6s with a fade-out transition (same pattern as the
+    // popup toast: remove a class → let CSS transition run → remove element).
+    if (needsClipboard) {
+      const banner = document.createElement("div");
+      banner.className = "chat-clipboard-banner show";
+      banner.textContent = "\u{1F4CB} Text copied to clipboard \u2014 paste it into the chat below";
+      wrap.appendChild(banner);
+      _bannerDismissTimer = setTimeout(() => {
+        _bannerDismissTimer = 0;
+        banner.classList.remove("show");
+        setTimeout(() => { if (banner.parentNode) banner.remove(); }, 400);
+      }, 6000);
+    }
 
     // Body: the embedded chat.
     const body = document.createElement("div");

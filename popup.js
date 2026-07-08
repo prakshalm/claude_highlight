@@ -1,9 +1,13 @@
 const STORAGE_KEY = "claude_highlights_v1";
 const SCHEMA_VERSION = 2;
+const RESURFACE_KEY = "luminote_resurface";
 const DEFAULT_ORIGINS = [
   "https://claude.ai",
   "https://chatgpt.com",
   "https://chat.openai.com",
+  "https://gemini.google.com",
+  "https://www.perplexity.ai",
+  "https://perplexity.ai",
 ];
 
 const listEl = document.getElementById("list");
@@ -689,6 +693,106 @@ driveDisconnectBtn.addEventListener("click", async () => {
   applyDriveState({ ok: true, configured: true, meta: res.meta });
 });
 
+// --- Resurface strip — show one older highlight on popup open ----------------
+
+const resurfaceStripEl = document.getElementById("resurfaceStrip");
+
+async function showResurfaceStrip() {
+  try {
+    const all = await loadAll();
+
+    // Flatten every highlight, tagging it with its storage key.
+    const flat = [];
+    for (const [key, arr] of Object.entries(all)) {
+      if (key.startsWith("_") || !Array.isArray(arr)) continue;
+      for (const h of arr) flat.push({ key, h });
+    }
+    if (flat.length === 0) return; // nothing to resurface
+
+    // Sort oldest-first by createdAt.
+    flat.sort((a, b) => {
+      const da = a.h.createdAt ? new Date(a.h.createdAt).getTime() : 0;
+      const db = b.h.createdAt ? new Date(b.h.createdAt).getTime() : 0;
+      return da - db;
+    });
+
+    // Read rotation state.
+    const state = await new Promise((resolve) =>
+      chrome.storage.local.get([RESURFACE_KEY], (res) => resolve(res[RESURFACE_KEY] || {})),
+    );
+    const lastId = state.lastId || null;
+
+    // Take the older half (minimum 1 item).
+    const halfLen = Math.max(1, Math.floor(flat.length / 2));
+    let candidates = flat.slice(0, halfLen).filter((c) => c.h.id !== lastId);
+    // If excluding lastId emptied the pool, widen to full list minus lastId.
+    if (candidates.length === 0) {
+      candidates = flat.filter((c) => c.h.id !== lastId);
+    }
+    // If STILL empty (only 1 highlight total, same as lastId), just show it.
+    if (candidates.length === 0) candidates = flat;
+
+    const pick = candidates[Math.floor(Math.random() * candidates.length)];
+    const h = pick.h;
+    const info = describeKey(pick.key, h);
+    const jumpUrl = h.url || info.url;
+
+    // Save rotation state.
+    chrome.storage.local.set({ [RESURFACE_KEY]: { lastId: h.id, shownAt: Date.now() } });
+
+    // Build the strip content.
+    resurfaceStripEl.innerHTML = "";
+
+    const body = document.createElement("div");
+    body.className = "resurface-body";
+
+    const label = document.createElement("div");
+    label.className = "resurface-label";
+    label.textContent = "From your highlights";
+    body.appendChild(label);
+
+    const text = document.createElement("div");
+    text.className = "resurface-text";
+    text.textContent = h.text;
+    body.appendChild(text);
+
+    if (h.note && h.note.trim()) {
+      const note = document.createElement("div");
+      note.className = "resurface-note";
+      note.textContent = "Note: " + h.note;
+      body.appendChild(note);
+    }
+
+    const source = document.createElement("div");
+    source.className = "resurface-source";
+    source.textContent = info.hostLabel + " · " + info.label;
+    body.appendChild(source);
+
+    resurfaceStripEl.appendChild(body);
+
+    const dismiss = document.createElement("button");
+    dismiss.className = "resurface-dismiss";
+    dismiss.type = "button";
+    dismiss.title = "Dismiss";
+    dismiss.setAttribute("aria-label", "Dismiss");
+    dismiss.textContent = "\u00d7";
+    dismiss.addEventListener("click", (e) => {
+      e.stopPropagation();
+      resurfaceStripEl.hidden = true;
+    });
+    resurfaceStripEl.appendChild(dismiss);
+
+    // Click anywhere on the strip (except dismiss) jumps to the highlight.
+    resurfaceStripEl.addEventListener("click", () => {
+      jumpToHighlight(jumpUrl, h.id);
+    });
+
+    resurfaceStripEl.hidden = false;
+  } catch (_) {
+    // Never break the popup if resurfacing fails.
+  }
+}
+
 async function initList() {
   await migrateStorage();
   try {
@@ -698,6 +802,7 @@ async function initList() {
     currentChatUrl = null;
   }
   renderList();
+  showResurfaceStrip();
 }
 
 activateOnCurrentTab();

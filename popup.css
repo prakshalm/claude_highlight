@@ -569,3 +569,72 @@ body {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
 }
+
+/* --- Resurface strip ------------------------------------------------------ */
+
+.resurface-strip {
+  background: var(--primary-container);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.resurface-strip:hover {
+  border-color: var(--primary);
+  box-shadow: 0 1px 3px var(--shadow);
+}
+.resurface-strip .resurface-body {
+  flex: 1;
+  min-width: 0;
+}
+.resurface-strip .resurface-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--on-surface-variant);
+  margin-bottom: 3px;
+}
+.resurface-strip .resurface-text {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--on-primary-container);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.resurface-strip .resurface-note {
+  font-size: 11.5px;
+  color: var(--on-surface-variant);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.resurface-strip .resurface-source {
+  font-size: 10.5px;
+  color: var(--outline);
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.resurface-strip .resurface-dismiss {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: var(--on-surface-variant);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+}
+.resurface-strip .resurface-dismiss:hover {
+  background: var(--state-hover);
+  color: var(--on-surface);
+}

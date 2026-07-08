@@ -9,9 +9,12 @@
     "https://claude.ai/*",
     "https://chatgpt.com/*",
     "https://chat.openai.com/*",
+    "https://gemini.google.com/*",
+    "https://www.perplexity.ai/*",
+    "https://perplexity.ai/*",
     "https://www.googleapis.com/*"
   ],
-  "declarative_net_rules": {
+  "declarative_net_request": {
     "rule_resources": [
       { "id": "frame_ruleset", "enabled": true, "path": "rules.json" }
     ]
@@ -25,7 +28,14 @@
   },
   "content_scripts": [
     {
-      "matches": ["http://*/*", "https://*/*"],
+      "matches": [
+        "https://claude.ai/*",
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://gemini.google.com/*",
+        "https://www.perplexity.ai/*",
+        "https://perplexity.ai/*"
+      ],
       "js": ["content.js"],
       "css": ["content.css"],
       "run_at": "document_idle"
