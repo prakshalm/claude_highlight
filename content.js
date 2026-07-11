@@ -88,9 +88,25 @@
     }
     if (host === "chatgpt.com" || host === "chat.openai.com") {
       const m = location.pathname.match(/\/c\/([a-f0-9-]+)/i);
-      return m ? "chatgpt:" + m[1] : null;
+      if (m) return "chatgpt:" + m[1];
+      // Fall through to URL-based ID for root page / custom GPTs
     }
     return "url:" + location.origin + location.pathname;
+  }
+
+  function showToast(message, durationMs = 3000) {
+    const existing = document.querySelector(".claude-hl-toast");
+    if (existing) existing.remove();
+    const el = document.createElement("div");
+    el.className = "claude-hl-toast";
+    el.textContent = message;
+    document.body.appendChild(el);
+    el.offsetHeight; // force reflow
+    el.classList.add("show");
+    setTimeout(() => {
+      el.classList.remove("show");
+      setTimeout(() => { if (el.parentNode) el.remove(); }, 400);
+    }, durationMs);
   }
 
   function genId() {
@@ -100,11 +116,22 @@
   // Find the main chat content container. Falls back through several selectors
   // since Claude's DOM may change. Picks the largest match by text length.
   function findChatContainer() {
-    const candidates = [
+    const host = location.hostname;
+    let candidates = [
       'main [class*="conversation"]',
       "main",
       '[role="main"]',
     ];
+
+    if (host.includes("gemini.google.com")) {
+      candidates = [
+        'infinite-scroller',
+        'chat-window',
+        'message-list',
+        ...candidates
+      ];
+    }
+
     for (const sel of candidates) {
       const els = document.querySelectorAll(sel);
       let best = null;
@@ -113,6 +140,22 @@
       }
       if (best && best.textContent.length > 100) return best;
     }
+
+    // Generic structural fallback for Gemini if custom elements aren't found
+    if (host.includes("gemini.google.com")) {
+      const msgContents = document.querySelectorAll('.markdown.markdown-main-panel');
+      if (msgContents.length > 0) {
+        let el = msgContents[0].parentElement;
+        while (el && el !== document.body) {
+          try {
+            const overflowY = window.getComputedStyle(el).overflowY;
+            if (overflowY === 'auto' || overflowY === 'scroll') return el;
+          } catch (_) {}
+          el = el.parentElement;
+        }
+      }
+    }
+
     return document.body;
   }
 
@@ -350,6 +393,20 @@
   async function getHighlightsForConv(convId) {
     const all = await loadAll();
     return all[convId] || [];
+  }
+
+  // Extract #hashtag patterns from note text → lowercase, deduplicated array.
+  function extractTags(noteText) {
+    if (!noteText) return [];
+    const matches = noteText.match(/#[a-zA-Z0-9_-]+/g);
+    if (!matches) return [];
+    const seen = new Set();
+    const tags = [];
+    for (const m of matches) {
+      const t = m.slice(1).toLowerCase();
+      if (t && !seen.has(t)) { seen.add(t); tags.push(t); }
+    }
+    return tags;
   }
 
   async function saveHighlight(convId, highlight) {
@@ -679,10 +736,15 @@
     const hl = await getHighlightById(id);
     if (!hl) return;
     hl.note = value;
+    hl.tags = extractTags(value);
     await saveHighlight(getConversationId(), hl);
     card.classList.remove("editing");
     applyNoteState(id, value); // empty note drops the has-note flag → card removed
-    if (value) card.querySelector(".card-text").textContent = value;
+    if (value) {
+      const textEl = card.querySelector(".card-text");
+      textEl.innerHTML = renderNoteHTML(value);
+      textEl.dataset.rawNote = value;
+    }
     schedulePositionMarkers();
   }
 
@@ -690,6 +752,7 @@
     const hl = await getHighlightById(id);
     if (!hl) return;
     hl.note = "";
+    hl.tags = [];
     await saveHighlight(getConversationId(), hl);
     applyNoteState(id, ""); // highlight stays; only the note (and its card) go away
     schedulePositionMarkers();
@@ -733,8 +796,9 @@
       const note = first.title || "";
       const textEl = card.querySelector(".card-text");
       // Don't overwrite the note preview while the user is editing this card.
-      if (!card.classList.contains("editing") && textEl.textContent !== note) {
-        textEl.textContent = note;
+      if (!card.classList.contains("editing") && textEl.dataset.rawNote !== note) {
+        textEl.innerHTML = renderNoteHTML(note);
+        textEl.dataset.rawNote = note;
       }
       card.title = note || "View note";
 
@@ -940,14 +1004,44 @@
   // --- Streaming detection ---------------------------------------------------
   // Blocks highlight creation while Claude is actively generating a response.
   function isStreaming() {
+    const host = location.hostname;
+    
+    if (host.includes("gemini.google.com")) {
+      // 1. Button check: any stop button that is NOT the TTS button, AND is visible
+      const stopBtns = document.querySelectorAll('button[aria-label*="Stop"], button[data-testid*="stop"], button[title*="Stop"]');
+      for (const btn of stopBtns) {
+        const label = (btn.getAttribute("aria-label") || "").toLowerCase();
+        if (label.includes("stop listening")) continue;
+        if (btn.offsetParent !== null) return true;
+      }
+      
+      // 2. aria-busy check scoped to the most recent message
+      const panels = document.querySelectorAll('.markdown.markdown-main-panel');
+      if (panels.length > 0) {
+        const lastPanel = panels[panels.length - 1];
+        // Check if the panel itself, its descendants, or its ancestors are busy
+        if (lastPanel.closest('[aria-busy="true"]') || lastPanel.querySelector('[aria-busy="true"]')) {
+          return true;
+        }
+      }
+      
+      // 3. Spinner check
+      const spinner = document.querySelector('.generating-indicator, [class*="streaming"]');
+      if (spinner && spinner.offsetParent !== null) return true;
+      
+      return false;
+    }
+
+    // Generic Claude/ChatGPT fallback
     const stopBtn = document.querySelector(
       'button[aria-label*="Stop"], button[data-testid*="stop"], button[title*="Stop"]'
     );
-    if (stopBtn) return true;
+    if (stopBtn && stopBtn.offsetParent !== null) return true;
+    
     const spinner = document.querySelector(
       '[data-testid="streaming-indicator"], .loading-indicator, [class*="streaming"]'
     );
-    return !!spinner;
+    return !!(spinner && spinner.offsetParent !== null);
   }
   // --- Selection handling ----------------------------------------------------
 
@@ -1033,7 +1127,7 @@
     }
     const convId = getConversationId();
     if (!convId) {
-      alert("Open a specific chat to save highlights.");
+      showToast("Open a specific chat to save highlights.");
       return;
     }
 
@@ -1554,6 +1648,29 @@
 
     wrap.appendChild(brightnessRow);
 
+    // Star toggle row
+    const starRow = document.createElement("div");
+    starRow.className = "star-row";
+    const starBtn = document.createElement("button");
+    starBtn.type = "button";
+    starBtn.className = "star-toggle" + (highlight.starred ? " starred" : "");
+    starBtn.textContent = highlight.starred ? "\u2605" : "\u2606";
+    starBtn.title = highlight.starred ? "Unstar" : "Star";
+    const starLabel = document.createElement("span");
+    starLabel.className = "star-label";
+    starLabel.textContent = highlight.starred ? "Starred" : "Star";
+    starBtn.addEventListener("click", async () => {
+      highlight.starred = !highlight.starred;
+      starBtn.textContent = highlight.starred ? "\u2605" : "\u2606";
+      starBtn.classList.toggle("starred", highlight.starred);
+      starBtn.title = highlight.starred ? "Unstar" : "Star";
+      starLabel.textContent = highlight.starred ? "Starred" : "Star";
+      await saveHighlight(highlight.convId, highlight);
+    });
+    starRow.appendChild(starBtn);
+    starRow.appendChild(starLabel);
+    wrap.appendChild(starRow);
+
     const ta = document.createElement("textarea");
     ta.placeholder = "Write a note about this highlight…";
     ta.value = highlight.note || "";
@@ -1571,6 +1688,7 @@
     del.addEventListener("click", async () => {
       if (mode === "note") {
         highlight.note = "";
+        highlight.tags = [];
         await saveHighlight(highlight.convId, highlight);
         applyNoteState(highlight.id, "");
         schedulePositionMarkers();
@@ -1601,6 +1719,7 @@
     save.textContent = "Save";
     save.addEventListener("click", async () => {
       highlight.note = ta.value.trim();
+      highlight.tags = extractTags(highlight.note);
       await saveHighlight(highlight.convId, highlight);
       applyNoteState(highlight.id, highlight.note);
       closeNotePopup();
@@ -1665,6 +1784,23 @@
     ));
   }
 
+  function renderNoteHTML(noteText) {
+    if (!noteText) return "";
+    const str = String(noteText).trim();
+    const tokens = str.split(/\s+/).filter(Boolean);
+    const isAllTags = tokens.length > 0 && tokens.every(t => /^#[a-zA-Z0-9_-]+$/.test(t));
+    
+    if (isAllTags) {
+      return `<div class="note-tags-only">${
+        tokens.map(t => `<span class="tag-chip">${escapeHtml(t)}</span>`).join("")
+      }</div>`;
+    }
+    
+    let escaped = escapeHtml(str);
+    escaped = escaped.replace(/(#[a-zA-Z0-9_-]+)/g, '<span class="tag-chip">$1</span>');
+    return escaped;
+  }
+
   function closeSearchPanel() {
     if (searchPanelEl) {
       searchPanelEl.remove();
@@ -1688,7 +1824,7 @@
   async function openSearchPanel() {
     const convId = getConversationId();
     if (!convId) {
-      alert("Claude Highlighter: open a chat to search highlights.");
+      showToast("Claude Highlighter: open a chat to search highlights.");
       return;
     }
     closeSearchPanel();

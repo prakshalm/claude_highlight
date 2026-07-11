@@ -626,6 +626,45 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* --- Star toggle in note popup ------------------------------------------- */
+.claude-hl-note .star-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  margin-bottom: 4px;
+}
+.claude-hl-note .star-toggle {
+  background: transparent;
+  border: 1px solid var(--hl-outline-variant);
+  border-radius: var(--hl-radius-full);
+  color: var(--hl-outline);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.claude-hl-note .star-toggle:hover {
+  color: var(--hl-primary);
+  border-color: var(--hl-primary);
+}
+.claude-hl-note .star-toggle.starred {
+  color: #e6a817;
+  border-color: #e6a817;
+  background: rgba(230, 168, 23, 0.1);
+}
+.claude-hl-note .star-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--hl-on-surface-variant);
+}
+
 .claude-hl-note .actions {
   display: flex;
   justify-content: space-between;
@@ -771,11 +810,42 @@
   padding: 8px 14px;
   opacity: 1;
 }
+.claude-hl-toast {
+  position: fixed;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2147483647;
+  max-height: 0;
+  padding: 0 16px;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: center;
+  color: #5c3d00;
+  background: linear-gradient(to right, #fff3e0, #ffe0b2);
+  border: 1px solid rgba(255, 152, 0, 0.18);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  opacity: 0;
+  overflow: hidden;
+  transition: opacity 0.4s ease, max-height 0.4s ease, padding 0.4s ease;
+  font-family: "Roboto", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.claude-hl-toast.show {
+  max-height: 48px;
+  padding: 10px 16px;
+  opacity: 1;
+}
 @media (prefers-color-scheme: dark) {
   .claude-hl-chat .chat-clipboard-banner {
     color: #ffd180;
     background: linear-gradient(to right, #3e2c14, #4a3318);
     border-bottom-color: rgba(255, 183, 77, 0.2);
+  }
+  .claude-hl-toast {
+    color: #ffd180;
+    background: linear-gradient(to right, #3e2c14, #4a3318);
+    border-color: rgba(255, 183, 77, 0.2);
   }
 }
 .claude-hl-chat .chat-footer {
@@ -847,4 +917,30 @@
         transparent 80%
       );
   }
+}
+
+/* --- Inline Note Tags --- */
+.note-tags-only {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0 6px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.claude-hl-note .tag-chip,
+.claude-hl-search .tag-chip {
+  background: var(--hl-surface-high);
+  color: var(--hl-on-surface-variant);
+  border: 1px solid var(--hl-outline-variant);
+}
+.claude-hl-marker .tag-chip {
+  background: color-mix(in srgb, var(--card-muted) 15%, transparent);
+  color: var(--card-muted);
+  border: 1px solid color-mix(in srgb, var(--card-muted) 40%, transparent);
 }

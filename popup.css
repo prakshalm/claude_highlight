@@ -638,3 +638,107 @@ body {
   background: var(--state-hover);
   color: var(--on-surface);
 }
+
+/* --- Starred filter bar --------------------------------------------------- */
+
+.starred-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.starred-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface-container-high);
+  color: var(--on-surface-variant);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-full);
+  padding: 4px 12px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.starred-filter-btn:hover {
+  background: var(--surface-container);
+  border-color: var(--outline);
+}
+.starred-filter-btn.active {
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+  border-color: var(--primary);
+}
+
+.filter-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--outline-variant);
+  margin: 0 2px;
+}
+
+.tag-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  background: var(--surface-container-high);
+  color: var(--on-surface-variant);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-full);
+  padding: 4px 12px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.tag-filter-btn:hover {
+  background: var(--surface-container);
+  border-color: var(--outline);
+}
+.tag-filter-btn.active {
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+  border-color: var(--primary);
+}
+
+.note-tags-only {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  background: var(--surface-container-high);
+  color: var(--on-surface-variant);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-full);
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* --- Star button on highlight items --------------------------------------- */
+
+.star-btn {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: var(--outline);
+  cursor: pointer;
+  padding: 2px 4px;
+  font-size: 16px;
+  line-height: 1;
+  transition: color 0.12s ease, transform 0.12s ease;
+}
+.star-btn:hover {
+  color: var(--primary);
+  transform: scale(1.15);
+}
+.star-btn.starred {
+  color: #e6a817;
+}

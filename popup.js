@@ -70,6 +70,23 @@ function escapeHtml(str) {
   return str.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
 
+function renderNoteHTML(noteText) {
+  if (!noteText) return "";
+  const str = String(noteText).trim();
+  const tokens = str.split(/\s+/).filter(Boolean);
+  const isAllTags = tokens.length > 0 && tokens.every(t => /^#[a-zA-Z0-9_-]+$/.test(t));
+  
+  if (isAllTags) {
+    return `<div class="note-tags-only">${
+      tokens.map(t => `<span class="tag-chip">${escapeHtml(t)}</span>`).join("")
+    }</div>`;
+  }
+  
+  let escaped = escapeHtml(str);
+  escaped = escaped.replace(/(#[a-zA-Z0-9_-]+)/g, '<span class="tag-chip">$1</span>');
+  return escaped;
+}
+
 function formatDate(iso) {
   try {
     const d = new Date(iso);
@@ -121,6 +138,9 @@ function formatHighlightsForChat(items) {
       section += "\n\n> " + h.text.replace(/\n/g, "\n> ");
       if (h.note && h.note.trim()) {
         section += "\n\nNote: " + h.note;
+      }
+      if (h.tags && h.tags.length > 0) {
+        section += "\n\nTags: " + h.tags.map(t => "#" + t).join(" ");
       }
     }
 
@@ -204,6 +224,9 @@ async function activateOnCurrentTab() {
 }
 
 // --- Highlights list -------------------------------------------------------
+
+let starredFilterActive = false;
+let activeTagFilter = null;   // null = no tag filter; string = show only this tag
 
 // Strip a trailing " - <siteName>" suffix from a page title so it doesn't
 // duplicate the host label already shown in the header row.
@@ -311,15 +334,57 @@ async function renderList() {
     return;
   }
 
+  // Starred filter toggle bar
+  const filterBar = document.createElement("div");
+  filterBar.className = "starred-filter-bar";
+  const starToggle = document.createElement("button");
+  starToggle.type = "button";
+  starToggle.className = "starred-filter-btn" + (starredFilterActive ? " active" : "");
+  starToggle.innerHTML = (starredFilterActive ? "★" : "☆") + " Starred";
+  starToggle.addEventListener("click", () => {
+    starredFilterActive = !starredFilterActive;
+    renderList();
+  });
+  filterBar.appendChild(starToggle);
+
+  // Collect every unique tag across all highlights for the tag chip bar.
+  const allTags = new Set();
+  for (const key of keys) {
+    const arr = all[key] || [];
+    for (const h of arr) {
+      if (Array.isArray(h.tags)) h.tags.forEach((t) => allTags.add(t));
+    }
+  }
+  if (allTags.size > 0) {
+    const tagSep = document.createElement("span");
+    tagSep.className = "filter-sep";
+    filterBar.appendChild(tagSep);
+    for (const tag of [...allTags].sort()) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "tag-filter-btn" + (activeTagFilter === tag ? " active" : "");
+      chip.textContent = "#" + tag;
+      chip.addEventListener("click", () => {
+        activeTagFilter = activeTagFilter === tag ? null : tag;
+        renderList();
+      });
+      filterBar.appendChild(chip);
+    }
+  }
+
+  listEl.appendChild(filterBar);
+
   // Collect conversations that have matches, so we can order + collapse them.
   const sections = [];
   for (const key of keys) {
     const highlights = all[key] || [];
-    const filtered = q
+    let filtered = q
       ? highlights.filter(
           (h) => h.text.toLowerCase().includes(q) || (h.note || "").toLowerCase().includes(q),
         )
       : highlights;
+    if (starredFilterActive) filtered = filtered.filter((h) => h.starred);
+    if (activeTagFilter) filtered = filtered.filter((h) => Array.isArray(h.tags) && h.tags.includes(activeTagFilter));
     if (!filtered.length) continue;
     const sample = filtered[0] || highlights[0];
     const info = describeKey(key, sample);
@@ -327,7 +392,14 @@ async function renderList() {
   }
 
   if (!sections.length) {
-    listEl.innerHTML = '<div class="empty">No matches.</div>';
+    const emptyDiv = document.createElement("div");
+    emptyDiv.className = "empty";
+    emptyDiv.textContent = starredFilterActive
+      ? "No starred highlights."
+      : activeTagFilter
+        ? "No highlights tagged #" + activeTagFilter + "."
+        : "No matches.";
+    listEl.appendChild(emptyDiv);
     return;
   }
 
@@ -372,9 +444,10 @@ async function renderList() {
       item.className = "item";
       item.innerHTML = `
         <label class="hl-check-label"><input type="checkbox" class="hl-check" data-hl-id="${h.id}" data-hl-key="${escapeHtml(key)}"></label>
+        <button type="button" class="star-btn${h.starred ? ' starred' : ''}" data-id="${h.id}" data-key="${escapeHtml(key)}" title="${h.starred ? 'Unstar' : 'Star'}">${h.starred ? "\u2605" : "\u2606"}</button>
         <div class="item-content">
           <div><span class="swatch" style="background:${h.color || "#fff59d"}"></span><span class="text">${escapeHtml(h.text)}</span></div>
-          ${h.note ? `<div class="note">${escapeHtml(h.note)}</div>` : ""}
+          ${h.note ? `<div class="note">${renderNoteHTML(h.note)}</div>` : ""}
           <div class="meta"><span>${formatDate(h.createdAt)}</span><button class="del" data-id="${h.id}" data-key="${escapeHtml(key)}">Delete</button></div>
         </div>
       `;
@@ -386,6 +459,23 @@ async function renderList() {
       });
       // Checkbox change updates the Send button badge.
       item.querySelector(".hl-check").addEventListener("change", updateSendChatBtn);
+      // Star toggle — optimistic UI then persist.
+      item.querySelector(".star-btn").addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const btn = e.currentTarget;
+        const hlId = btn.dataset.id;
+        const hlKey = btn.dataset.key;
+        const data = await loadAll();
+        if (!data[hlKey]) return;
+        const hl = data[hlKey].find((x) => x.id === hlId);
+        if (!hl) return;
+        hl.starred = !hl.starred;
+        // Optimistic update
+        btn.textContent = hl.starred ? "★" : "☆";
+        btn.classList.toggle("starred", hl.starred);
+        btn.title = hl.starred ? "Unstar" : "Star";
+        await saveAll(data);
+      });
       body.appendChild(item);
     }
     convDiv.appendChild(body);
@@ -759,7 +849,7 @@ async function showResurfaceStrip() {
     if (h.note && h.note.trim()) {
       const note = document.createElement("div");
       note.className = "resurface-note";
-      note.textContent = "Note: " + h.note;
+      note.innerHTML = "Note: " + renderNoteHTML(h.note);
       body.appendChild(note);
     }
 
